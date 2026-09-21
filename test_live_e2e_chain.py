@@ -4,8 +4,9 @@ from contextos.hooks.adapter import HookAdapter
 
 def main():
     print("=== LIVE END-TO-END CODEX LIFECYCLE CHAIN TEST ===")
-    data_dir = Path("/Users/watersworksbackend/Downloads/ContextOS_Documentation/.contextos")
-    adapter = HookAdapter()
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        adapter = HookAdapter()
 
     sess_a = "session-e2e-a"
     sess_b = "session-e2e-b"
