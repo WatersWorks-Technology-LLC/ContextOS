@@ -13,12 +13,12 @@ ContextOS is a domain-independent semantic memory system and context compiler de
 
 ## 💡 Executive Summary & Core Philosophy
 
-In long-running autonomous agent sessions, context bloat degrades reasoning performance, inflates token API costs by up to 5x, and causes semantic drift. ContextOS resolves this by treating working memory as a compiled artifact rather than a raw log append.
+In long-running autonomous agent sessions using Codex, Claude Code, OpenClaw, or local models, context bloat poses significant operational challenges: repeatedly resending growing histories multiplies input-token usage, long sessions eventually hit context limits or require compaction of older context, and plain vector-only retrieval does not explicitly model temporal ordering, supersession, or state transitions. ContextOS resolves this by compiling the **smallest trustworthy working world-model** necessary for an agent's next act of reasoning.
 
 ### 🏛️ The Tripartite Symbiotic Architecture
 - **Executive Reasoning Model (Codex / Claude / Antigravity)**: Acts as the primary decision engine executing tools, writing code, and orchestrating workflows.
-- **Local Context Coprocessor (Ollama)**: Local LLM service (`nomic-embed-text` & `qwen2.5:1.5b`) handling fast vector embeddings, candidate reranking, and semantic assertion extraction at near-zero token cost.
-- **ContextOS Engine**: Maintains the canonical semantic IR, enforces multi-tenant boundary isolation, project facts, goal tracking gates, and temporal validity decay.
+- **Local Context Coprocessor (Ollama)**: Local LLM service (`nomic-embed-text` & `qwen2.5:1.5b`) handling fast vector embeddings, candidate reranking, and semantic assertion extraction using local inference without per-token API charges.
+- **ContextOS Engine**: Maintains the canonical semantic IR, enforces multi-runtime/workspace boundary isolation, project facts, goal tracking gates, and temporal validity management.
 
 ---
 
@@ -42,14 +42,14 @@ This ensures that subagents inside the same session (e.g. `codex:default:project
 
 ## 🔄 AI Agent Memory Lifecycle Management
 
-ContextOS transforms raw interaction streams into verifiable assertions, decaying stale facts and compacting context windows seamlessly.
+ContextOS transforms raw interaction streams into verifiable assertions, managing temporal validity and compacting context windows seamlessly.
 
 ![AI Agent Memory Lifecycle](docs/assets/contextos_memory_lifecycle.jpg)
 
 1. **Event Sourcing Log**: All incoming prompts and tool outputs are recorded in an append-only, SHA-256 content-addressed JSONL event store.
 2. **Semantic Assertion Extraction**: Local Ollama coprocessor extracts structured assertions (`subject`, `predicate`, `object`, `kind`, `confidence`).
 3. **Assertion Promotion**: Session facts verified as project invariants are promoted to the shared store via `promote_assertion` with origin metadata preserved.
-4. **Temporal Validity & Decay**: Assertions track `observed_at`, `valid_from`, and `valid_until` timestamps. Deprecated facts are marked `status = 'superseded'` via `supersede_assertion`.
+4. **Temporal Validity & Versioning**: Assertions track `observed_at`, `valid_from`, and `valid_until` timestamps. Deprecated facts are marked `status = 'superseded'` via `supersede_assertion`.
 5. **Compaction & Rehydration**: PreCompact and PostCompact hooks allow ContextOS to rehydrate essential invariants without losing critical context after window truncation.
 
 ---
