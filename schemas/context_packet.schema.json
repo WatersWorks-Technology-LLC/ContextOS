@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContextOS Context Packet",
+  "type": "object",
+  "required": [
+    "version",
+    "context_commit",
+    "context_text",
+    "confidence"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "context_commit": {
+      "type": "string"
+    },
+    "context_text": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "expandable_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metrics": {
+      "type": "object"
+    }
+  }
+}

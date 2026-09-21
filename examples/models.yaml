@@ -1,0 +1,24 @@
+# Example roles. Benchmark and replace as appropriate for the local machine.
+models:
+  embedding:
+    provider: ollama
+    model: qwen3-embedding
+
+  fast:
+    provider: ollama
+    model: qwen3:4b
+    timeout_s: 4
+
+  worker:
+    provider: ollama
+    model: gpt-oss:20b
+    timeout_s: 20
+
+  analyst:
+    provider: ollama
+    model: glm-4.7-flash
+    timeout_s: 45
+
+routing:
+  deterministic_first: true
+  use_analyst_on_synchronous_path: false

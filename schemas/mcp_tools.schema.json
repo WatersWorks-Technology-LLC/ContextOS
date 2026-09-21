@@ -1,0 +1,32 @@
+{
+  "tools": [
+    {
+      "name": "prepare_turn",
+      "purpose": "Compile verified task context before Codex reasons."
+    },
+    {
+      "name": "query",
+      "purpose": "Search state, history, conflicts, decisions, relations, or open questions."
+    },
+    {
+      "name": "expand",
+      "purpose": "Raise semantic resolution of a memory object."
+    },
+    {
+      "name": "source",
+      "purpose": "Retrieve original evidence by source ID."
+    },
+    {
+      "name": "record",
+      "purpose": "Record durable decision/constraint/fact/question/correction/task state."
+    },
+    {
+      "name": "visual",
+      "purpose": "Generate VCL/VCL-A/timeline/dependency representations."
+    },
+    {
+      "name": "stats",
+      "purpose": "Return ContextOS operational diagnostics."
+    }
+  ]
+}

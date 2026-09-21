@@ -1,0 +1,72 @@
+{
+  "description": "ContextOS lifecycle integration",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "contextos",
+            "tool": "prepare_turn",
+            "input": {
+              "session_id": "${session_id}",
+              "turn_id": "${turn_id}",
+              "cwd": "${cwd}",
+              "prompt": "${prompt}"
+            },
+            "timeout": 12,
+            "statusMessage": "Compiling local context",
+            "additionalContextLimit": 12000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "contextos-hook post-tool-use",
+            "timeout": 2,
+            "statusMessage": "Recording tool outcome"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "contextos-hook pre-compact",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "contextos-hook post-compact",
+            "timeout": 3,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "contextos-hook stop",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

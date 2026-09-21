@@ -1,0 +1,9 @@
+# Example only. Merge into ~/.codex/config.toml or a trusted project's .codex/config.toml.
+
+[mcp_servers.contextos]
+command = "/opt/homebrew/bin/uv"
+args = ["run", "--project", "/Users/USER/contextos", "contextos-mcp"]
+cwd = "/Users/USER/contextos"
+enabled = true
+startup_timeout_sec = 20
+tool_timeout_sec = 120
