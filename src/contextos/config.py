@@ -34,19 +34,19 @@ class ContextOSConfig(BaseModel):
         ws = workspace_dir or Path.cwd()
         cfg_file = ws / ".contextos" / "config.yaml"
         cid = client_id or os.getenv("CONTEXTOS_CLIENT_ID", "codex")
-        pid = project_id or os.getenv("CONTEXTOS_PROJECT_ID", "default")
+        pid = project_id or os.getenv("CONTEXTOS_PROJECT_ID")
         if cfg_file.exists():
             try:
                 with open(cfg_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
                 data["workspace_dir"] = ws
                 data["client_id"] = cid
-                data["project_id"] = pid
+                data["project_id"] = pid or data.get("project_id") or "default"
                 data.setdefault("workspace_id", str(ws.resolve()))
                 return cls(**data)
             except Exception:
                 pass
-        return cls(workspace_dir=ws, client_id=cid, project_id=pid, workspace_id=str(ws.resolve()))
+        return cls(workspace_dir=ws, client_id=cid, project_id=pid or "default", workspace_id=str(ws.resolve()))
 
     def ensure_directories(self) -> Path:
         return self.ensure_client_directory()

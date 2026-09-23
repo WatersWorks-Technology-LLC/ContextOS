@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+from ..identity import IdentityScope
 from ..storage.semantic_store import SemanticStore
 from ..storage.vector_index import VectorIndex
 from ..storage.knowledge_graph import KnowledgeGraph
@@ -25,14 +26,19 @@ class RetrievalCascade:
 
     def retrieve(self, prompt: str, target_files: List[str] = None, top_k: int = 20,
                  runtime_id: Optional[str] = "codex", workspace_id: Optional[str] = None,
-                 project_id: Optional[str] = None) -> Dict[str, Any]:
+                 project_id: Optional[str] = None, identity: Optional[IdentityScope] = None) -> Dict[str, Any]:
         candidates = []
 
         # 1. Semantic store assertions (client local + shared truth)
-        current_assertions = self.semantic.query_current_state(runtime_id=runtime_id, workspace_id=workspace_id, project_id=project_id)
+        current_assertions = self.semantic.query_current_state(runtime_id=runtime_id, workspace_id=workspace_id, project_id=project_id, identity=identity)
         if self.shared_semantic:
             shared_assertions = self.shared_semantic.query_current_state(runtime_id=None,
                 workspace_id=workspace_id, project_id=project_id)
+            if identity is not None:
+                shared_assertions = [a for a in shared_assertions
+                    if a["workspace_id"] == identity.workspace_id
+                    and (a["project_id"] == identity.project_id or a["scope"] == "workspace")
+                    and a["scope"] not in ("session", "ephemeral", "runtime")]
             # Deduplicate by assertion_id
             seen_ids = {a["assertion_id"] for a in current_assertions}
             for sa in shared_assertions:

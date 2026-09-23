@@ -203,9 +203,9 @@ class GoalEngine:
 
         return evidence
 
-    def record_checkpoint(self, tool_name: str, tool_input: Any, tool_output: str, session_id: str = "default") -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def record_checkpoint(self, tool_name: str, tool_input: Any, tool_output: str, session_id: str = "default", identity=None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         self.data = self._load_with_lock()
-        goal = self.get_active_goal(session_id=session_id)
+        goal = self.get_active_goal(**identity.as_dict()) if identity else self.get_active_goal(session_id=session_id)
         if not goal:
             return None, None
 
@@ -270,14 +270,14 @@ class GoalEngine:
         return False
 
 
-    def evaluate_stop_condition(self, final_response_text: str = "", session_id: str = "default") -> Dict[str, Any]:
+    def evaluate_stop_condition(self, final_response_text: str = "", session_id: str = "default", identity=None) -> Dict[str, Any]:
         """
         Evaluates whether Codex is permitted to STOP or must BLOCK/CONTINUE working.
         - Unfulfilled goals -> decision="block" with continuation prompt
         - Completed goals -> decision="allow" (maps to clean empty dict response)
         """
         self.data = self._load_with_lock()
-        goal = self.get_active_goal(session_id=session_id)
+        goal = self.get_active_goal(**identity.as_dict()) if identity else self.get_active_goal(session_id=session_id)
         if not goal or goal["status"] == "COMPLETED":
             return {
                 "decision": "allow",

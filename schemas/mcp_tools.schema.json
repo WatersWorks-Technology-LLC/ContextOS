@@ -2,31 +2,476 @@
   "tools": [
     {
       "name": "prepare_turn",
-      "purpose": "Compile verified task context before Codex reasons."
+      "description": "Compile pre-turn context packet",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "session_start",
+      "description": "Hydrate session state and goals",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "post_tool_use",
+      "description": "Record tool output and update goal checkpoints",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tool_name": {
+            "type": "string"
+          },
+          "tool_input": {
+            "type": "object"
+          },
+          "tool_output": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "pre_compact",
+      "description": "Snapshot context before compaction",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "post_compact",
+      "description": "Rehydrate context post-compaction",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "subagent_start",
+      "description": "Scope context for subagent",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "subagent_stop",
+      "description": "Record subagent outcome",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "result_text": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
+    },
+    {
+      "name": "stop_eval",
+      "description": "Evaluate goal completion before allowing session stop",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "final_text": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "query",
-      "purpose": "Search state, history, conflicts, decisions, relations, or open questions."
+      "description": "Query structured memory (state, timeline, decisions, conflicts)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "search",
+              "state",
+              "timeline",
+              "decisions",
+              "constraints",
+              "questions",
+              "conflicts"
+            ]
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "expand",
-      "purpose": "Raise semantic resolution of a memory object."
+      "description": "Demand paging: raise semantic resolution level (Z0 to Z4)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "level": {
+            "type": "integer"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "source",
-      "purpose": "Retrieve original evidence by source ID."
+      "description": "Fetch exact raw evidence bundle",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_chars": {
+            "type": "integer"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "record",
-      "purpose": "Record durable decision/constraint/fact/question/correction/task state."
+      "description": "Record durable decision or constraint",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Assertion content. Legacy session_id/agent_id are accepted; any supplied workspace/project/runtime identity must match the selected request scope."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "visual",
-      "purpose": "Generate VCL/VCL-A/timeline/dependency representations."
+      "description": "Generate SVG visual context graph map",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     },
     {
       "name": "stats",
-      "purpose": "Return ContextOS operational diagnostics."
+      "description": "Fetch operational diagnostics",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute existing workspace directory. Never changes the server default."
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Project within cwd; defaults to the bound session or selected workspace configuration."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bound by prepare_turn/session_start with cwd; a new named session always requires cwd."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity within the session; defaults to main (role for subagent_stop)."
+          }
+        }
+      }
     }
   ]
 }
