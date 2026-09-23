@@ -3,6 +3,7 @@ import json
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from ..identity import IdentityScope
 
 class SemanticStore:
     """
@@ -207,12 +208,30 @@ class SemanticStore:
             )
         return aid
 
+    @staticmethod
+    def _identity_filter(identity: Optional[IdentityScope]):
+        if identity is None:
+            return "1 = 1", []
+        # Client-local MCP reads never widen to another workspace or runtime.
+        # Durable project assertions may be reused across sessions; transient
+        # session/ephemeral assertions remain private to their originating agent.
+        return (
+            "runtime_id = ? AND workspace_id = ? AND project_id = ? "
+            "AND (scope NOT IN ('session', 'ephemeral') OR (origin_session = ? AND origin_agent = ?))",
+            [identity.runtime_id, identity.workspace_id, identity.project_id,
+             identity.session_id, identity.agent_id],
+        )
+
     def query_current_state(self, kind: Optional[str] = None, entity_id: Optional[str] = None,
                             runtime_id: Optional[str] = "codex", workspace_id: Optional[str] = None,
-                            project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+                            project_id: Optional[str] = None,
+                            identity: Optional[IdentityScope] = None) -> List[Dict[str, Any]]:
         query = "SELECT * FROM assertions WHERE status = 'current'"
         params = []
-        if runtime_id:
+        if identity is not None:
+            clause, params = self._identity_filter(identity)
+            query += " AND " + clause
+        elif runtime_id:
             query += " AND (runtime_id = ? OR scope IN ('workspace', 'global'))"
             params.append(runtime_id)
         if workspace_id:
@@ -233,27 +252,37 @@ class SemanticStore:
             return [dict(r) for r in rows]
 
 
-    def query_conflicts_and_closed_branches(self) -> Dict[str, List[Dict[str, Any]]]:
+    def query_conflicts_and_closed_branches(self, identity: Optional[IdentityScope] = None) -> Dict[str, List[Dict[str, Any]]]:
+        clause, params = self._identity_filter(identity)
         with self._get_conn() as conn:
-            conflicts = [dict(r) for r in conn.execute("SELECT * FROM assertions WHERE status IN ('conflict', 'proposed')").fetchall()]
-            closed = [dict(r) for r in conn.execute("SELECT * FROM assertions WHERE status = 'rejected'").fetchall()]
+            conflicts = [dict(r) for r in conn.execute(
+                "SELECT * FROM assertions WHERE status IN ('conflict', 'proposed') AND " + clause, params).fetchall()]
+            closed = [dict(r) for r in conn.execute(
+                "SELECT * FROM assertions WHERE status = 'rejected' AND " + clause, params).fetchall()]
         return {"conflicts": conflicts, "closed_branches": closed}
 
-    def search_assertions(self, keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_assertions(self, keyword: str, limit: int = 20,
+                          identity: Optional[IdentityScope] = None) -> List[Dict[str, Any]]:
         pattern = f"%{keyword}%"
-        query = """SELECT * FROM assertions 
-                   WHERE subject LIKE ? OR predicate LIKE ? OR object LIKE ? OR decision_rationale LIKE ?
-                   ORDER BY created_at DESC LIMIT ?"""
+        clause, params = self._identity_filter(identity)
+        query = """SELECT * FROM assertions
+                   WHERE (assertion_id = ? OR subject LIKE ? OR predicate LIKE ? OR object LIKE ? OR decision_rationale LIKE ?)
+                   AND """ + clause + " ORDER BY created_at DESC LIMIT ?"
         with self._get_conn() as conn:
-            rows = conn.execute(query, (pattern, pattern, pattern, pattern, limit)).fetchall()
+            rows = conn.execute(query, [keyword, pattern, pattern, pattern, pattern, *params, limit]).fetchall()
             return [dict(r) for r in rows]
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self, identity: Optional[IdentityScope] = None) -> Dict[str, int]:
+        clause, params = self._identity_filter(identity)
         with self._get_conn() as conn:
-            entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-            assertion_count = conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
-            current_count = conn.execute("SELECT COUNT(*) FROM assertions WHERE status = 'current'").fetchone()[0]
-            conflict_count = conn.execute("SELECT COUNT(*) FROM assertions WHERE status IN ('proposed', 'conflict', 'rejected')").fetchone()[0]
+            if identity is None:
+                entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            else:
+                entity_count = conn.execute(
+                    "SELECT COUNT(DISTINCT entity_id) FROM assertions WHERE " + clause, params).fetchone()[0]
+            assertion_count = conn.execute("SELECT COUNT(*) FROM assertions WHERE " + clause, params).fetchone()[0]
+            current_count = conn.execute("SELECT COUNT(*) FROM assertions WHERE status = 'current' AND " + clause, params).fetchone()[0]
+            conflict_count = conn.execute("SELECT COUNT(*) FROM assertions WHERE status IN ('proposed', 'conflict', 'rejected') AND " + clause, params).fetchone()[0]
         return {
             "entities": entity_count,
             "total_assertions": assertion_count,

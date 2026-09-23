@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional
+from ..identity import IdentityScope
 from ..storage.semantic_store import SemanticStore
 from ..storage.source_store import SourceStore
 
@@ -15,13 +16,13 @@ class ContextCapsuleManager:
         self.semantic = semantic_store
         self.sources = source_store
 
-    def expand(self, target_id: str, level: int = 3) -> Dict[str, Any]:
+    def expand(self, target_id: str, level: int = 3, identity: Optional[IdentityScope] = None) -> Dict[str, Any]:
         """
         Demand Paging Tool execution (MCP `expand`).
         Escalates semantic resolution level from Z0 up to Z4.
         """
         # Find assertions matching target_id
-        matches = self.semantic.search_assertions(target_id)
+        matches = self.semantic.search_assertions(target_id, identity=identity)
         if not matches:
             return {"id": target_id, "level": level, "status": "not_found", "payload": None}
 
@@ -65,7 +66,7 @@ class ContextCapsuleManager:
 
         elif level == 3:
             # Detailed Semantic Capsule
-            conflicts_closed = self.semantic.query_conflicts_and_closed_branches()
+            conflicts_closed = self.semantic.query_conflicts_and_closed_branches(identity=identity)
             return {
                 "id": target_id,
                 "level": 3,
@@ -87,7 +88,7 @@ class ContextCapsuleManager:
         elif level == 4:
             # Raw Evidence Bundle
             source_refs = [m["source_ref"] for m in matches if m.get("source_ref")]
-            raw_evidence = self.sources.get_sources(source_refs, max_chars=12000) if source_refs else {}
+            raw_evidence = self.sources.get_sources(source_refs, max_chars=12000, identity=identity, allow_legacy=identity is None) if source_refs else {}
             return {
                 "id": target_id,
                 "level": 4,

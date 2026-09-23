@@ -67,16 +67,18 @@ class HookAdapter:
         self.worker_pool = DaemonWorkerPool()
         self.worker_pool.start_workers()
 
-    def on_session_start(self, session_id: str = "default", matcher: str = "startup") -> Dict[str, Any]:
-        identity = IdentityScope.from_config(self.config, session_id)
+    def on_session_start(self, session_id: str = "default", matcher: str = "startup", agent_id: str = "main") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         self.events.append_event("SessionStart", {"matcher": matcher}, session_id=session_id, identity=identity)
-        active_goal = self.goals.get_active_goal(session_id=session_id)
-        stats = self.semantic.get_stats()
+        active_goal = self.goals.get_active_goal(**identity.as_dict())
+        stats = self.semantic.get_stats(identity=identity)
+        assertions = self.semantic.query_current_state(identity=identity)
+        _, pinned = self.safeguards.enforce_pinning(assertions, [])
         
         context_parts = [
             "ContextOS Hydrated Session:",
-            f"- Project State Assertions: {stats.get('assertions_count', 0)}",
-            f"- Pinned Invariants: {stats.get('pinned_invariants_count', 0)}"
+            f"- Project State Assertions: {stats['current_assertions']}",
+            f"- Pinned Invariants: {len(pinned)}"
         ]
         if active_goal:
             context_parts.append(f"- Active Goal: [{active_goal['goal_id']}] {active_goal['description']}")
@@ -95,10 +97,11 @@ class HookAdapter:
         prompt: str,
         session_id: str = "default",
         cwd: str = None,
-        parent_commit: Optional[str] = None
+        parent_commit: Optional[str] = None,
+        agent_id: str = "main"
     ) -> Dict[str, Any]:
         start_time = time.time()
-        identity = IdentityScope.from_config(self.config, session_id)
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         
         # 1. Record raw event
         self.events.append_event("UserPromptSubmit", {"prompt": prompt, "cwd": cwd}, session_id=session_id, identity=identity)
@@ -131,7 +134,7 @@ class HookAdapter:
 
         # 4. Multi-faceted retrieval cascade
         retrieved = self.retrieval.retrieve(prompt, target_files=target_files, runtime_id=identity.runtime_id,
-            workspace_id=identity.workspace_id, project_id=identity.project_id)
+            workspace_id=identity.workspace_id, project_id=identity.project_id, identity=identity)
 
         # 5. Current-state projection
         projection = CurrentStateProjector.project(retrieved["assertions"])
@@ -256,10 +259,10 @@ class HookAdapter:
             }
         }
 
-    def on_post_tool_use(self, tool_name: str, tool_input: Dict[str, Any], tool_output: str, session_id: str = "default") -> Dict[str, Any]:
-        identity = IdentityScope.from_config(self.config, session_id)
+    def on_post_tool_use(self, tool_name: str, tool_input: Dict[str, Any], tool_output: str, session_id: str = "default", agent_id: str = "main") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         # Synchronously record checkpoint evidence into active goal
-        goal, feedback_str = self.goals.record_checkpoint(tool_name, tool_input, tool_output, session_id=session_id)
+        goal, feedback_str = self.goals.record_checkpoint(tool_name, tool_input, tool_output, session_id=session_id, identity=identity)
 
         # Enqueue non-blocking async P1 task
         def async_post_tool_work():
@@ -276,11 +279,11 @@ class HookAdapter:
             return {"additionalContext": feedback_str}
         return {}
 
-    def on_pre_compact(self, session_id: str = "default") -> Dict[str, Any]:
-        identity = IdentityScope.from_config(self.config, session_id)
+    def on_pre_compact(self, session_id: str = "default", agent_id: str = "main") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         self.events.append_event("PreCompact", {}, session_id=session_id, identity=identity)
-        active_assertions = self.semantic.query_current_state()
-        pinned = self.safeguards.pinned_invariants
+        active_assertions = self.semantic.query_current_state(identity=identity)
+        _, pinned = self.safeguards.enforce_pinning(active_assertions, [])
         snapshot = {
             "assertions": active_assertions,
             "pinned_invariants": pinned,
@@ -289,11 +292,12 @@ class HookAdapter:
         sid = self.sources.put_source(str(snapshot), metadata={"kind": "pre_compact_snapshot"}, identity=identity)
         return {"snapshot_id": sid, "status": "persisted"}
 
-    def on_post_compact(self, session_id: str = "default") -> Dict[str, Any]:
-        identity = IdentityScope.from_config(self.config, session_id)
+    def on_post_compact(self, session_id: str = "default", agent_id: str = "main") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         self.events.append_event("PostCompact", {}, session_id=session_id, identity=identity)
-        active_goal = self.goals.get_active_goal(session_id=session_id)
-        pinned = self.safeguards.pinned_invariants
+        active_goal = self.goals.get_active_goal(**identity.as_dict())
+        assertions = self.semantic.query_current_state(identity=identity)
+        _, pinned = self.safeguards.enforce_pinning(assertions, [])
         rehydrated_context = [
             "ContextOS Rehydrated Post-Compaction Context:",
             f"- Active Invariants: {', '.join(pinned) if pinned else 'None'}"
@@ -313,7 +317,7 @@ class HookAdapter:
             runtime_id=identity.runtime_id, workspace_id=identity.workspace_id, project_id=identity.project_id, parent_agent_id=parent_agent_id)
         classification = TaskClassifier.classify(prompt)
         retrieved = self.retrieval.retrieve(prompt, target_files=classification["target_files"], runtime_id=identity.runtime_id,
-            workspace_id=identity.workspace_id, project_id=identity.project_id)
+            workspace_id=identity.workspace_id, project_id=identity.project_id, identity=identity)
         context_text, _ = HeterogeneousPacketCompiler.compile_packet(retrieved["assertions"], [])
         
         goal_scope_str = f"\n- Inherited Session Goal: {subagent_info['inherited_goal_id']}" if subagent_info.get("inherited_goal_id") else ""
@@ -321,14 +325,14 @@ class HookAdapter:
             "additionalContext": f"ContextOS Subagent Scoped Context ({role}):{goal_scope_str}\n" + context_text
         }
 
-    def on_subagent_stop(self, role: str, result_text: str, session_id: str = "default"):
-        identity = IdentityScope.from_config(self.config, session_id, role)
+    def on_subagent_stop(self, role: str, result_text: str, session_id: str = "default", agent_id: Optional[str] = None):
+        identity = IdentityScope.from_config(self.config, session_id, agent_id or role)
         self.events.append_event("SubagentStop", {"role": role, "result_summary": result_text[:200]}, session_id=session_id, identity=identity)
         self.sources.put_source(result_text, metadata={"kind": "subagent_result", "role": role}, identity=identity)
 
 
-    def on_stop(self, final_text: str, session_id: str = "default") -> Dict[str, Any]:
-        identity = IdentityScope.from_config(self.config, session_id)
+    def on_stop(self, final_text: str, session_id: str = "default", agent_id: str = "main") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id, agent_id)
         def async_stop_work():
             sid = self.sources.put_source(final_text, metadata={"kind": "final_response"}, identity=identity)
             self.events.append_event("Stop", {"source_id": sid}, session_id=session_id, identity=identity)
@@ -336,5 +340,5 @@ class HookAdapter:
         self.worker_pool.enqueue_ingest(async_stop_work)
 
         # Autonomous Goal Acceptance Evaluation
-        eval_res = self.goals.evaluate_stop_condition(final_text, session_id=session_id)
+        eval_res = self.goals.evaluate_stop_condition(final_text, session_id=session_id, identity=identity)
         return eval_res
