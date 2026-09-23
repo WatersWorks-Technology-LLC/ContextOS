@@ -2,6 +2,7 @@ import pytest
 import tempfile
 from pathlib import Path
 from contextos.storage.source_store import SourceStore
+from contextos.identity import IdentityScope
 from contextos.core.provenance_audit import ProvenanceAuditor
 from contextos.core.drift_audit import SemanticDriftAuditor
 
@@ -12,7 +13,7 @@ def tmp_dir():
 
 def test_unit_provenance_auditor_strict_rules(tmp_dir):
     ss = SourceStore(tmp_dir)
-    sid = ss.put_source("Authentic evidence source snippet")
+    sid = ss.put_source("Authentic evidence source snippet", identity=IdentityScope("codex", "workspace", "project", "session", "main"))
     auditor = ProvenanceAuditor(ss)
 
     assertions = [

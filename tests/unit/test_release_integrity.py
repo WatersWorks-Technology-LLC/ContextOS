@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from contextos.core.certificate import ReleaseCertificateManager
 from contextos.storage.versioning import ContextVersionStore
+from contextos.identity import IdentityScope
 
 def test_release_certificate_cannot_lie():
     """
@@ -77,12 +78,13 @@ def test_version_dag_validation_and_repair():
         vstore = ContextVersionStore(data_dir)
 
         # 1. Create a root commit with parent=None
-        c1 = vstore.create_commit("Text 1", [], [], "strat1", "sess1", parent_commit=None)
+        identity = IdentityScope("codex", "workspace", "project", "sess1", "main")
+        c1 = vstore.create_commit("Text 1", [], [], "strat1", "sess1", parent_commit=None, identity=identity)
         assert c1["parent_commit"] is None
 
         # 2. Attempt self-parent commit
         cid1 = c1["commit_id"]
-        c2 = vstore.create_commit("Text 2", [], [], "strat1", "sess1", parent_commit=cid1)
+        c2 = vstore.create_commit("Text 2", [], [], "strat1", "sess1", parent_commit=cid1, identity=identity)
         cid2 = c2["commit_id"]
 
         # Directly inject self-parent to simulate legacy corrupt data
@@ -108,8 +110,9 @@ def test_version_dag_cycle_detection():
         data_dir = Path(tmpdir)
         vstore = ContextVersionStore(data_dir)
 
-        c1 = vstore.create_commit("A", [], [], "s", "sess", parent_commit=None)
-        c2 = vstore.create_commit("B", [], [], "s", "sess", parent_commit=c1["commit_id"])
+        identity = IdentityScope("codex", "workspace", "project", "sess", "main")
+        c1 = vstore.create_commit("A", [], [], "s", "sess", parent_commit=None, identity=identity)
+        c2 = vstore.create_commit("B", [], [], "s", "sess", parent_commit=c1["commit_id"], identity=identity)
 
         # Inject cycle: c1 parent points to c2
         vstore.versions[c1["commit_id"]]["parent_commit"] = c2["commit_id"]

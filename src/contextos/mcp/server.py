@@ -5,6 +5,7 @@ from typing import Dict, Any
 from ..hooks.adapter import HookAdapter
 from ..core.capsules import ContextCapsuleManager
 from ..codecs.vcl_svg import VCLSVGRenderer
+from ..identity import IdentityScope
 
 class ContextOSMCPServer:
     """
@@ -207,7 +208,11 @@ class ContextOSMCPServer:
             elif name == "source":
                 sids = args.get("source_ids", [])
                 max_chars = args.get("max_chars", 12000)
-                sources = self.adapter.sources.get_sources(sids, max_chars=max_chars)
+                identity = IdentityScope.from_config(self.adapter.config,
+                    args.get("session_id", "default"), args.get("agent_id", "main"))
+                sources = self.adapter.sources.get_sources(sids, max_chars=max_chars, identity=identity)
+                shared = self.adapter.shared_sources.get_sources(sids, max_chars=max_chars, identity=identity)
+                sources.update(shared)
                 return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(sources)}]}}
 
             elif name == "record":
@@ -220,7 +225,14 @@ class ContextOSMCPServer:
                     predicate=payload.get("predicate", "defined"),
                     object_val=payload.get("object", str(payload)),
                     kind=kind,
-                    decision_rationale=payload.get("rationale")
+                    decision_rationale=payload.get("rationale"),
+                    runtime_id=self.adapter.config.client_id,
+                    workspace_id=self.adapter.config.workspace_id or str(self.adapter.config.workspace_dir.resolve()),
+                    project_id=self.adapter.config.project_id,
+                    origin_session=payload.get("session_id", "default"),
+                    origin_agent=payload.get("agent_id", "main"),
+                    origin_turn=payload.get("turn_id"),
+                    identity_confidence="observed"
                 )
                 return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps({"status": "recorded", "assertion_id": aid})}]}}
 

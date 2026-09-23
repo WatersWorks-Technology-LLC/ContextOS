@@ -7,6 +7,7 @@ from contextos.core.experiment_runner import AutonomousExperimentRunner
 from contextos.core.tournament import CodecTournamentEngine
 from contextos.core.provenance_audit import ProvenanceAuditor
 from contextos.core.inspector import HumanAuditableContextInspector
+from contextos.identity import IdentityScope
 
 @pytest.fixture
 def tmp_dir():
@@ -33,14 +34,14 @@ def test_unit_codec_tournament(tmp_dir):
     er = AutonomousExperimentRunner(tmp_dir)
     tournament = CodecTournamentEngine(er)
     assertions = [{"subject": "DB", "predicate": "max_conn", "object": "100", "kind": "fact"}]
-    res = tournament.run_tournament(assertions, ["Invariant 1"])
+    res = tournament.run_tournament(assertions, ["Invariant 1"], identity=IdentityScope("codex", "workspace", "project", "session", "main").as_dict())
     assert "winner" in res
     assert "rankings" in res
     assert len(res["match_details"]) >= 3
 
 def test_unit_provenance_auditor(tmp_dir):
     ss = SourceStore(tmp_dir)
-    sid = ss.put_source("Authentic evidence content")
+    sid = ss.put_source("Authentic evidence content", identity=IdentityScope("codex", "workspace", "project", "session", "main"))
     auditor = ProvenanceAuditor(ss)
 
     assertions = [

@@ -160,7 +160,15 @@ class GoalEngine:
         sessions = self.data.get("sessions", {})
         full_key = self._get_identity_key(runtime_id, workspace_id, project_id, session_id, agent_id)
         legacy_key = f"{runtime_id}:{workspace_id}:{project_id}:{session_id}"
-        gid = sessions.get(full_key) or sessions.get(legacy_key) or sessions.get(session_id)
+        # Legacy session-only keys are unsafe across projects/workspaces. Keep
+        # them readable only when the stored goal's full scope matches.
+        gid = sessions.get(full_key) or sessions.get(legacy_key)
+        if not gid and session_id in sessions:
+            candidate = self.data.get("goals", {}).get(sessions[session_id])
+            expected = (runtime_id, workspace_id, project_id, session_id, agent_id)
+            actual = tuple((candidate or {}).get(k) for k in ("runtime_id", "workspace_id", "project_id", "session_id", "agent_id"))
+            if actual == expected:
+                gid = sessions[session_id]
         if gid and gid in self.data["goals"]:
             return self.data["goals"][gid]
         return None

@@ -3,6 +3,7 @@ import hashlib
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from ..identity import IdentityScope
 
 class ContextVersionStore:
     """
@@ -35,8 +36,11 @@ class ContextVersionStore:
         invariants: List[str],
         strategy_name: str,
         session_id: str = "default",
-        parent_commit: Optional[str] = None
+        parent_commit: Optional[str] = None,
+        identity: Optional[IdentityScope] = None
     ) -> Dict[str, Any]:
+        if identity is None:
+            raise ValueError("IdentityScope is required for new versions")
         content_hash = hashlib.sha256(context_text.encode("utf-8")).hexdigest()[:10]
         commit_id = f"CMT-{content_hash}"
         
@@ -59,6 +63,8 @@ class ContextVersionStore:
             "commit_id": commit_id,
             "parent_commit": parent_commit,
             "session_id": session_id,
+            **identity.as_dict(),
+            "identity_confidence": "observed",
             "timestamp": time.time(),
             "strategy_name": strategy_name,
             "context_text": context_text,

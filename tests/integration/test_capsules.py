@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from contextos.storage.semantic_store import SemanticStore
 from contextos.storage.source_store import SourceStore
+from contextos.identity import IdentityScope
 from contextos.core.capsules import ContextCapsuleManager
 
 @pytest.fixture
@@ -11,7 +12,7 @@ def capsule_mgr():
         p = Path(td)
         sem = SemanticStore(p)
         src = SourceStore(p)
-        sid = src.put_source("Primary source text evidence for AuthService")
+        sid = src.put_source("Primary source text evidence for AuthService", identity=IdentityScope("codex", "workspace", "project", "session", "main"))
         sem.add_assertion("A-AUTH", "AuthService", "uses", "OAuth2", kind="decision", source_ref=sid, decision_rationale="Stateless authentication requirement")
         yield ContextCapsuleManager(sem, src)
 

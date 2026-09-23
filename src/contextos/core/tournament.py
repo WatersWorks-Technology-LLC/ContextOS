@@ -29,17 +29,20 @@ class CodecTournamentEngine:
     Ties are resolved via a deterministic 6-tier tie-breaking hierarchy.
     """
     TOURNAMENT_COMPETITORS = [
-        "hybrid_packet",
         "ncc_vcl",
         "csc_vcl",
         "structured_text",
         "json_schema",
         "columnar",
-        "native_graph"
+        "native_graph",
+        "bitset",
+        "timeline",
+        "raw",
+        "handles",
+        "vcl_a"
     ]
 
     COMPLEXITY_SCORES = {
-        "hybrid_packet": 1,
         "ncc_vcl": 2,
         "csc_vcl": 3,
         "structured_text": 4,
@@ -47,15 +50,13 @@ class CodecTournamentEngine:
         "native_graph": 6,
         "json_schema": 7
     }
+    COMPLEXITY_SCORES.update({"bitset": 8, "timeline": 8, "raw": 8, "handles": 8, "vcl_a": 8})
 
     def __init__(self, experimenter: AutonomousExperimentRunner):
         self.experimenter = experimenter
 
     def _encode_competitor(self, competitor: str, assertions: List[Dict[str, Any]], invariants: List[str], graph_edges: List[Dict[str, Any]] = None) -> Tuple[str, str]:
-        if competitor == "hybrid_packet":
-            return HeterogeneousPacketCompiler.compile_packet(assertions, invariants, graph_edges=graph_edges)
-
-        elif competitor == "ncc_vcl":
+        if competitor == "ncc_vcl":
             return NCCVCLCodec.encode_packet(assertions, invariants)
 
         elif competitor == "structured_text":
@@ -84,6 +85,12 @@ class CodecTournamentEngine:
                 lines.append(f"({a.get('subject')})-[{a.get('predicate')}]->({a.get('object')})")
             return "\n".join(lines), "grp1234"
 
+        elif competitor in ("bitset", "timeline", "raw", "handles", "vcl_a"):
+            lines = [f"[{competitor.upper()}]"]
+            lines.extend(str(a.get("object", "")) for a in assertions)
+            lines.extend(invariants)
+            return "\n".join(lines), f"{competitor[:3]}1234"
+
         return StructuredTextCodec.encode_packet(assertions, invariants)
 
     def run_match(
@@ -94,7 +101,8 @@ class CodecTournamentEngine:
         graph_edges: List[Dict[str, Any]] = None,
         task_quality: float = 1.0,
         source_accuracy: float = 1.0,
-        fidelity: float = 1.0
+        fidelity: float = 1.0,
+        identity: Dict[str, str] = None
     ) -> Dict[str, Any]:
         start_time = time.time()
 
@@ -114,7 +122,8 @@ class CodecTournamentEngine:
             assertion_count=len(assertions),
             task_quality=task_quality,
             source_accuracy=source_accuracy,
-            fidelity=fidelity
+            fidelity=fidelity,
+            identity=identity
         )
 
         return {
@@ -135,11 +144,12 @@ class CodecTournamentEngine:
         self,
         assertions: List[Dict[str, Any]],
         invariants: List[str],
-        graph_edges: List[Dict[str, Any]] = None
+        graph_edges: List[Dict[str, Any]] = None,
+        identity: Dict[str, str] = None
     ) -> Dict[str, Any]:
         results = {}
         for comp in self.TOURNAMENT_COMPETITORS:
-            results[comp] = self.run_match(comp, assertions, invariants, graph_edges=graph_edges)
+            results[comp] = self.run_match(comp, assertions, invariants, graph_edges=graph_edges, identity=identity)
 
         ranked = sorted(
             results.items(),
@@ -155,26 +165,29 @@ class CodecTournamentEngine:
             reverse=True
         )
 
-        section_winner = ranked[0][0]
+        def winner_for(eligible: Tuple[str, ...]) -> str:
+            return next((name for name, _ in ranked if name in eligible), eligible[0])
 
         section_codecs = {
-            "@INV": "ncc_vcl",
-            "@STATE": "columnar",
-            "@DEP": "native_graph",
-            "@DEC": section_winner if section_winner in ("csc_vcl", "ncc_vcl") else "csc_vcl",
-            "@TIME": "timeline",
-            "@FLAGS": "bitset",
-            "@EXACT": "raw",
-            "@SRC": "handles",
-            "@VISUAL": "vcl_a"
+            "@INV": winner_for(("ncc_vcl", "structured_text", "json_schema")),
+            "@STATE": winner_for(("columnar", "ncc_vcl", "structured_text", "json_schema")),
+            "@DEP": winner_for(("native_graph", "columnar", "ncc_vcl")),
+            "@DEC": winner_for(("csc_vcl", "ncc_vcl", "structured_text")),
+            "@TIME": winner_for(("timeline", "structured_text", "ncc_vcl")),
+            "@FLAGS": winner_for(("bitset", "json_schema", "structured_text")),
+            "@EXACT": winner_for(("raw", "structured_text", "json_schema")),
+            "@SRC": winner_for(("handles", "json_schema", "structured_text")),
+            "@VISUAL": winner_for(("vcl_a", "native_graph", "structured_text"))
         }
+        winner_scores = {section: results[codec]["utility_score"] for section, codec in section_codecs.items()}
 
         return {
             "winner": "hybrid_packet",
             "active_meta_strategy": "hybrid_packet",
-            "section_winning_codec": section_winner,
+            "section_winning_codec": None,
             "section_codecs": section_codecs,
-            "winner_score": results["hybrid_packet"]["utility_score"],
+            "section_winner_scores": winner_scores,
+            "winner_score": None,
             "tie_breaking_tier": "1. utility_score / 2. task_quality / 3. fidelity / 4. context_cost / 5. latency / 6. safety",
             "rankings": {k: v["utility_score"] for k, v in ranked},
             "match_details": results

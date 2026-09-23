@@ -6,6 +6,7 @@ from contextos.storage.source_store import SourceStore
 from contextos.storage.semantic_store import SemanticStore
 from contextos.storage.vector_index import VectorIndex
 from contextos.storage.knowledge_graph import KnowledgeGraph
+from contextos.identity import IdentityScope
 
 @pytest.fixture
 def tmp_dir():
@@ -14,13 +15,15 @@ def tmp_dir():
 
 def test_unit_event_store(tmp_dir):
     es = EventStore(tmp_dir)
-    evt = es.append_event("TestEvent", {"key": "val"}, session_id="s1")
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    evt = es.append_event("TestEvent", {"key": "val"}, session_id="s1", identity=identity)
     assert evt["event_id"].startswith("EVT-")
     assert len(es.get_events()) == 1
 
 def test_unit_source_store(tmp_dir):
     ss = SourceStore(tmp_dir)
-    sid = ss.put_source("Evidence body")
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    sid = ss.put_source("Evidence body", identity=identity)
     assert sid.startswith("SRC-")
     assert ss.get_source(sid)["content"] == "Evidence body"
 

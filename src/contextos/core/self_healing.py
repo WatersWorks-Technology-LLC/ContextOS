@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from ..storage.versioning import ContextVersionStore
 from ..codecs.structured_text import StructuredTextCodec
 from ..codecs.ncc_vcl import NCCVCLCodec
+from ..identity import IdentityScope
 
 logger = logging.getLogger("ContextOS.SelfHealing")
 
@@ -38,7 +39,8 @@ class SelfHealingEngine:
         invariants: list,
         attempted_codec: str,
         session_id: str = "default",
-        parent_commit: Optional[str] = None
+        parent_commit: Optional[str] = None,
+        identity: IdentityScope = None
     ) -> Tuple[str, str, str, Dict[str, Any]]:
         """
         Attempts to compile context with the requested codec.
@@ -58,7 +60,7 @@ class SelfHealingEngine:
                 raise ValueError(f"Unknown or unsupported codec strategy: {attempted_codec}")
 
             # Create commit keyframe
-            commit = self.version_store.create_commit(text, assertions, invariants, attempted_codec, session_id, parent_commit)
+            commit = self.version_store.create_commit(text, assertions, invariants, attempted_codec, session_id, parent_commit, identity=identity)
             return text, checksum, attempted_codec, commit
 
         except Exception as e:
@@ -71,7 +73,7 @@ class SelfHealingEngine:
             
             # Rollback to stable parent keyframe if available
             rollback_commit = self.version_store.rollback(parent_commit) if parent_commit else None
-            commit = self.version_store.create_commit(text, assertions, invariants, fallback_codec, session_id, parent_commit)
+            commit = self.version_store.create_commit(text, assertions, invariants, fallback_codec, session_id, parent_commit, identity=identity)
 
             commit["incident"] = incident
             commit["rollback"] = rollback_commit

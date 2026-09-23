@@ -46,6 +46,8 @@ class SemanticStore:
                     origin_runtime TEXT DEFAULT 'codex',
                     origin_session TEXT DEFAULT 'default',
                     origin_agent TEXT DEFAULT 'main',
+                    origin_turn TEXT,
+                    identity_confidence TEXT DEFAULT 'observed',
                     origin_assertion_id TEXT,
                     confidence REAL DEFAULT 1.0,
                     source_ref TEXT,
@@ -75,6 +77,8 @@ class SemanticStore:
                 ("origin_runtime", "TEXT DEFAULT 'codex'"),
                 ("origin_session", "TEXT DEFAULT 'default'"),
                 ("origin_agent", "TEXT DEFAULT 'main'"),
+                ("origin_turn", "TEXT"),
+                ("identity_confidence", "TEXT DEFAULT 'legacy'"),
                 ("origin_assertion_id", "TEXT"),
                 ("decision_rationale", "TEXT"),
                 ("closed_branch_condition", "TEXT"),
@@ -124,19 +128,23 @@ class SemanticStore:
         decision_rationale: Optional[str] = None,
         closed_branch_condition: Optional[str] = None,
         valid_from: Optional[float] = None,
-        valid_until: Optional[float] = None
+        valid_until: Optional[float] = None,
+        origin_turn: Optional[str] = None,
+        identity_confidence: str = "observed"
     ) -> str:
         now = time.time()
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO assertions 
                    (assertion_id, entity_id, kind, subject, predicate, object, status, scope, runtime_id, workspace_id, project_id, producer_runtime,
-                    origin_runtime, origin_session, origin_agent, origin_assertion_id,
+                    origin_runtime, origin_session, origin_agent, origin_turn, origin_assertion_id,
+                    identity_confidence,
                     confidence, source_ref, decision_rationale, closed_branch_condition, observed_at, valid_from, valid_until, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     assertion_id, entity_id, kind, subject, predicate, object_val, status, scope, runtime_id, workspace_id, project_id, producer_runtime,
-                    producer_runtime, origin_session, origin_agent, origin_assertion_id,
+                    producer_runtime, origin_session, origin_agent, origin_turn, origin_assertion_id,
+                    identity_confidence,
                     confidence, source_ref, decision_rationale, closed_branch_condition, now, valid_from or now, valid_until, now
                 )
             )
@@ -199,12 +207,20 @@ class SemanticStore:
             )
         return aid
 
-    def query_current_state(self, kind: Optional[str] = None, entity_id: Optional[str] = None, runtime_id: Optional[str] = "codex") -> List[Dict[str, Any]]:
+    def query_current_state(self, kind: Optional[str] = None, entity_id: Optional[str] = None,
+                            runtime_id: Optional[str] = "codex", workspace_id: Optional[str] = None,
+                            project_id: Optional[str] = None) -> List[Dict[str, Any]]:
         query = "SELECT * FROM assertions WHERE status = 'current'"
         params = []
         if runtime_id:
-            query += " AND (scope IN ('project', 'workspace', 'global') OR runtime_id = ?)"
+            query += " AND (runtime_id = ? OR scope IN ('workspace', 'global'))"
             params.append(runtime_id)
+        if workspace_id:
+            query += " AND ((scope = 'global') OR workspace_id = ?)"
+            params.append(workspace_id)
+        if project_id:
+            query += " AND (scope IN ('workspace', 'global') OR project_id = ?)"
+            params.append(project_id)
         if kind:
             query += " AND kind = ?"
             params.append(kind)

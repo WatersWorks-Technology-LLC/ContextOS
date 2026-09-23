@@ -4,6 +4,7 @@ import statistics
 from pathlib import Path
 from contextos.config import ContextOSConfig
 from contextos.hooks.adapter import HookAdapter
+from contextos.identity import IdentityScope
 from contextos.core.tournament import CodecTournamentEngine
 from contextos.core.provenance_audit import ProvenanceAuditor
 from contextos.core.drift_audit import SemanticDriftAuditor
@@ -30,8 +31,9 @@ def run_full_canary_qualification():
     workspaces = ["proj_auth", "proj_database", "proj_gateway", "proj_analytics", "proj_ui"]
     print(f"[Step 1] Initializing 5 Isolated Workspace Repositories: {workspaces}")
 
-    sid1 = adapter.sources.put_source("AuthService OAuth2 security spec", metadata={"repo": "proj_auth"})
-    sid2 = adapter.sources.put_source("PostgresDB connection pool settings", metadata={"repo": "proj_database"})
+    test_identity = IdentityScope.from_config(adapter.config, "benchmark", "main")
+    sid1 = adapter.sources.put_source("AuthService OAuth2 security spec", metadata={"repo": "proj_auth"}, identity=test_identity)
+    sid2 = adapter.sources.put_source("PostgresDB connection pool settings", metadata={"repo": "proj_database"}, identity=test_identity)
 
     adapter.semantic.add_assertion("A-D01", "AuthService", "uses", "SessionTokens", kind="decision", source_ref=sid1)
     adapter.semantic.add_assertion("A-D02", "AuthService", "uses", "OAuth2", kind="decision", source_ref=sid1)

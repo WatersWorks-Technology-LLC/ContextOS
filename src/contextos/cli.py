@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from .config import ContextOSConfig
 from .hooks.adapter import HookAdapter
+from .identity import IdentityScope
 from .mcp.server import ContextOSMCPServer
 from .core.inspector import HumanAuditableContextInspector
 
@@ -151,7 +152,9 @@ UserPromptSubmit = [
         print("==================================================")
         if not campaigns:
             print("No active campaigns running. Initializing default 'hybrid-vs-ncc-tournament'...")
-            c = adapter.campaign_mgr.create_campaign("hybrid-vs-ncc-tournament", target_turns=500)
+            c = adapter.campaign_mgr.create_campaign("hybrid-section-codec-tournament", target_turns=500,
+                competitors=adapter.tournament.TOURNAMENT_COMPETITORS,
+                identity=IdentityScope.from_config(adapter.config, "campaign", "main"))
             campaigns = [c]
 
         for cmp_data in campaigns:

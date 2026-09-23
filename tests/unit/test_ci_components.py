@@ -4,6 +4,7 @@ from pathlib import Path
 from contextos.core.shadow_experimenter import ShadowTester, CounterfactualReplayEngine
 from contextos.core.campaigns import CampaignManager, ContextCanary
 from contextos.core.monitors import ContinuousMonitors, ExpansionMonitor
+from contextos.identity import IdentityScope
 
 @pytest.fixture
 def tmp_dir():
@@ -12,24 +13,27 @@ def tmp_dir():
 
 def test_unit_shadow_tester(tmp_dir):
     st = ShadowTester(tmp_dir)
+    identity = IdentityScope("codex", "workspace", "project", "session", "main")
     records = st.run_shadow_eval(
         turn_id="CMT-TEST1",
         prompt="Refactor auth module",
         assertions=[{"subject": "Auth", "predicate": "uses", "object": "OAuth2"}],
         invariants=["Rule 1"],
         production_strategy="hybrid_packet",
-        production_token_count=80
+        production_token_count=80,
+        identity=identity
     )
     assert len(records) >= 2
     assert records[0]["shadow_candidate"] != "hybrid_packet"
 
 def test_unit_campaign_manager(tmp_dir):
     cm = CampaignManager(tmp_dir)
-    c = cm.create_campaign("test-campaign", target_turns=10)
+    identity = IdentityScope("codex", "workspace", "project", "session", "main")
+    c = cm.create_campaign("test-campaign", target_turns=10, identity=identity)
     assert c["status"] == "RUNNING"
 
     for _ in range(10):
-        cm.record_campaign_turn("test-campaign", "hybrid_packet", 4.5)
+        cm.record_campaign_turn("test-campaign", "hybrid_packet", 4.5, identity=identity)
 
     updated = cm.get_campaign("test-campaign")
     assert updated["status"] == "COMPLETE"

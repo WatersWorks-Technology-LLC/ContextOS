@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from ..codecs.heterogeneous_compiler import HeterogeneousPacketCompiler
 from ..codecs.ncc_vcl import NCCVCLCodec
 from ..codecs.structured_text import StructuredTextCodec
+from ..identity import IdentityScope
 
 class ShadowTester:
     """
@@ -25,8 +26,11 @@ class ShadowTester:
         assertions: List[Dict[str, Any]],
         invariants: List[str],
         production_strategy: str,
-        production_token_count: int
+        production_token_count: int,
+        identity: IdentityScope = None
     ) -> List[Dict[str, Any]]:
+        if identity is None:
+            raise ValueError("IdentityScope is required for new shadow records")
         shadow_records = []
 
         for candidate in self.SHADOW_CANDIDATES:
@@ -56,6 +60,8 @@ class ShadowTester:
                 "shadow_prep_ms": prep_ms,
                 "checksum": checksum
             }
+            record.update(identity.as_dict())
+            record["identity_confidence"] = "observed"
 
             shadow_records.append(record)
             with open(self.file_path, "a", encoding="utf-8") as f:
@@ -72,7 +78,10 @@ class CounterfactualReplayEngine:
         self.file_path = data_dir / filename
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def record_episode(self, turn_id: str, prompt: str, assertions: list, invariants: list, result: str):
+    def record_episode(self, turn_id: str, prompt: str, assertions: list, invariants: list, result: str,
+                       identity: IdentityScope = None):
+        if identity is None:
+            raise ValueError("IdentityScope is required for new episodes")
         episode = {
             "turn_id": turn_id,
             "timestamp": time.time(),
@@ -81,10 +90,15 @@ class CounterfactualReplayEngine:
             "invariant_count": len(invariants),
             "codex_result_summary": result[:200]
         }
+        episode.update(identity.as_dict())
+        episode["identity_confidence"] = "observed"
         with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(episode) + "\n")
 
-    def replay_episodes(self, shadow_tester: ShadowTester, limit: int = 10) -> int:
+    def replay_episodes(self, shadow_tester: ShadowTester, limit: int = 10,
+                        identity: IdentityScope = None) -> int:
+        if identity is None:
+            raise ValueError("IdentityScope is required to replay episodes")
         if not self.file_path.exists():
             return 0
 
@@ -101,7 +115,8 @@ class CounterfactualReplayEngine:
                         assertions=[],
                         invariants=[],
                         production_strategy="hybrid_packet",
-                        production_token_count=100
+                        production_token_count=100,
+                        identity=identity
                     )
                     replayed_count += 1
                     if replayed_count >= limit:

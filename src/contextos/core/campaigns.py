@@ -4,6 +4,7 @@ import hashlib
 import statistics
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
+from ..identity import IdentityScope
 
 class CampaignManager:
     """
@@ -33,35 +34,55 @@ class CampaignManager:
         self,
         name: str,
         target_turns: int = 500,
-        competitors: List[str] = None
+        competitors: List[str] = None,
+        identity: Optional[IdentityScope] = None
     ) -> Dict[str, Any]:
+        if identity is None:
+            raise ValueError("IdentityScope is required for new campaigns")
         campaign = {
             "campaign_id": f"CMP-{name}",
             "name": name,
             "status": "RUNNING",
             "target_turns": target_turns,
             "completed_turns": 0,
-            "competitors": competitors or ["hybrid_packet", "ncc_vcl"],
-            "leader_so_far": competitors[0] if competitors else "hybrid_packet",
+            "competitors": competitors or ["ncc_vcl", "csc_vcl", "structured_text", "json_schema", "columnar", "native_graph", "bitset", "timeline", "raw", "handles", "vcl_a"],
+            "meta_strategy": "hybrid_packet",
+            "leader_so_far": None,
             "confidence": 0.50,
             "created_at": time.time(),
             "updated_at": time.time()
         }
-        self.campaigns[name] = campaign
+        campaign.update(identity.as_dict())
+        campaign["identity_confidence"] = "observed"
+        campaign_key = f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}"
+        self.campaigns[campaign_key] = campaign
         self._save()
         return campaign
 
-    def record_campaign_turn(self, name: str, winner_strategy: str, score_delta: float):
-        if name not in self.campaigns:
-            self.create_campaign(name)
+    def record_campaign_turn(self, name: str, winner_strategy: str, score_delta: float,
+                             identity: Optional[IdentityScope] = None,
+                             details: Optional[Dict[str, Any]] = None):
+        if identity is None:
+            raise ValueError("IdentityScope is required for campaign observations")
+        campaign_key = f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}"
+        if campaign_key not in self.campaigns:
+            self.create_campaign(name, identity=identity)
 
-        c = self.campaigns[name]
+        c = self.campaigns[campaign_key]
+        if (c.get("runtime_id"), c.get("workspace_id"), c.get("project_id")) != (
+                identity.runtime_id, identity.workspace_id, identity.project_id):
+            return
         if c["status"] != "RUNNING":
             return
 
         c["completed_turns"] += 1
         c["updated_at"] = time.time()
-        c["leader_so_far"] = winner_strategy
+        c.setdefault("observations", []).append({
+            **identity.as_dict(),
+            "strategy": winner_strategy, "score_delta": score_delta, "timestamp": c["updated_at"],
+            "identity_confidence": "observed", "details": details or {}
+        })
+        c["leader_so_far"] = winner_strategy if winner_strategy in c["competitors"] else None
         c["confidence"] = round(min(0.999, 0.50 + (c["completed_turns"] / (c["target_turns"] * 2.0))), 3)
 
         if c["completed_turns"] >= c["target_turns"]:
@@ -70,8 +91,11 @@ class CampaignManager:
 
         self._save()
 
-    def get_campaign(self, name: str) -> Optional[Dict[str, Any]]:
-        return self.campaigns.get(name)
+    def get_campaign(self, name: str, identity: Optional[IdentityScope] = None) -> Optional[Dict[str, Any]]:
+        if identity:
+            return self.campaigns.get(f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}")
+        matches = [c for c in self.campaigns.values() if c.get("name") == name]
+        return matches[0] if len(matches) == 1 else None
 
     def list_campaigns(self) -> List[Dict[str, Any]]:
         return list(self.campaigns.values())
@@ -134,14 +158,17 @@ class ContextCanary:
         workspace_id: str,
         session_id: str,
         campaign_id: str,
-        traffic_pct: int
+        traffic_pct: int,
+        runtime_id: str = "codex",
+        project_id: str = "default",
+        agent_id: str = "main"
     ) -> bool:
         if traffic_pct <= 0:
             return False
         if traffic_pct >= 100:
             return True
 
-        key = f"{workspace_id}:{session_id}:{campaign_id}"
+        key = f"{runtime_id}:{workspace_id}:{project_id}:{session_id}:{agent_id}:{campaign_id}"
         bucket = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % 100
         return bucket < traffic_pct
 

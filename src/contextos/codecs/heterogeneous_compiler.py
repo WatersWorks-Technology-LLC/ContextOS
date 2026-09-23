@@ -1,6 +1,7 @@
 import hashlib
 from typing import List, Dict, Any, Tuple
 from .ncc_vcl import NCCVCLCodec
+import json
 
 class HeterogeneousPacketCompiler:
     """
@@ -23,13 +24,32 @@ class HeterogeneousPacketCompiler:
         invariants: List[str],
         graph_edges: List[Dict[str, Any]] = None,
         timeline_events: List[Dict[str, Any]] = None,
-        include_visual_summary: bool = False
+        include_visual_summary: bool = False,
+        section_codecs: Dict[str, str] = None
     ) -> Tuple[str, str]:
         lines = ["CTX/2.1-HYBRID-BLOCK"]
+        selected = section_codecs or {}
+
+        def encode_section(section: str, rows: List[Dict[str, Any]]) -> List[str]:
+            codec = selected.get(section)
+            if codec in ("ncc_vcl", "csc_vcl", "structured_text", "json_schema"):
+                if codec == "ncc_vcl":
+                    return [NCCVCLCodec.encode_assertion(row) for row in rows]
+                if codec == "csc_vcl":
+                    return [f"{r.get('subject')} 关 {r.get('predicate')} 联 {r.get('object')}" for r in rows]
+                if codec == "json_schema":
+                    return [json.dumps(rows, ensure_ascii=False, separators=(",", ":"))]
+                return [f"- {r.get('subject')} {r.get('predicate')} {r.get('object')}" for r in rows]
+            if codec == "native_graph":
+                return [f"({r.get('subject')})-[{r.get('predicate')}]->({r.get('object')})" for r in rows]
+            if codec == "columnar":
+                return ["SUBJ | PRED | OBJ"] + [f"{r.get('subject')} | {r.get('predicate')} | {r.get('object')}" for r in rows]
+            return [NCCVCLCodec.encode_assertion(row) for row in rows]
 
         # 1. @INV -> NCC-VCL
         if invariants:
-            lines.append("@INV (NCC-VCL)")
+            inv_codec = selected.get("@INV", "ncc_vcl")
+            lines.append(f"@INV ({'NCC-VCL' if inv_codec == 'ncc_vcl' else inv_codec.upper()})")
             for inv in invariants:
                 lines.append(f"[MUST] {inv}")
 
@@ -48,20 +68,20 @@ class HeterogeneousPacketCompiler:
 
         # 3. @DEC -> NCC-VCL
         if decisions:
-            lines.append("@DEC (NCC-VCL)")
-            for d in decisions:
-                lines.append(NCCVCLCodec.encode_assertion(d))
+            dec_codec = selected.get("@DEC", "ncc_vcl")
+            lines.append(f"@DEC ({'NCC-VCL' if dec_codec == 'ncc_vcl' else dec_codec.upper()})")
+            lines.extend(encode_section("@DEC", decisions))
 
         # 4. @STATE -> Columnar Tabular
         if facts:
-            lines.append("@STATE (COLUMNAR)")
-            lines.append("SUBJ | PRED | OBJ")
-            for f in facts:
-                lines.append(f"{f.get('subject')} | {f.get('predicate')} | {f.get('object')}")
+            state_codec = selected.get("@STATE", "columnar")
+            lines.append(f"@STATE ({state_codec.upper()})")
+            lines.extend(encode_section("@STATE", facts))
 
         # 5. @DEP -> Graph Topology
         if graph_edges:
-            lines.append("@DEP (GRAPH)")
+            dep_codec = selected.get("@DEP")
+            lines.append(f"@DEP ({dep_codec.upper() if dep_codec else 'GRAPH'})")
             for e in graph_edges:
                 lines.append(f"{e.get('source')} -> {e.get('target')} [{e.get('relation', 'rel')}]")
 

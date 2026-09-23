@@ -10,9 +10,7 @@ class AutonomousExperimentRunner:
     Silently tests context strategies, measures token quota impact, and ranks Pareto efficiency.
     """
     CANDIDATE_STRATEGIES = [
-        {"name": "ncc_vcl", "codec": "ncc_vcl", "description": "Neanderthal Context Compression (Compact Text)"},
-        {"name": "structured_text", "codec": "structured_text", "description": "Structured English Bulleted Assertions"},
-        {"name": "json_schema", "codec": "structured_text", "description": "Typed JSON Assertions"}
+        {"name": "hybrid_packet", "codec": "hybrid_packet", "description": "Heterogeneous per-section ContextOS packet"}
     ]
 
     def __init__(self, data_dir: Path, filename: str = "experiments.json"):
@@ -38,15 +36,8 @@ class AutonomousExperimentRunner:
         """
         Autonomously rotates candidate strategies or selects the highest-scoring Pareto strategy.
         """
-        if self.current_turn_index < 6:
-            strat = self.CANDIDATE_STRATEGIES[self.current_turn_index % len(self.CANDIDATE_STRATEGIES)]
-            return strat
-
-        scores = self.get_strategy_scores()
-        best_name = max(scores.items(), key=lambda x: x[1]["pareto_efficiency_score"])[0] if scores else "ncc_vcl"
-        for strat in self.CANDIDATE_STRATEGIES:
-            if strat["name"] == best_name:
-                return strat
+        # Whole-packet codecs are not production competitors: hybrid_packet
+        # remains the orchestrator while section codecs compete independently.
         return self.CANDIDATE_STRATEGIES[0]
 
     def record_turn_metrics(
@@ -59,8 +50,11 @@ class AutonomousExperimentRunner:
         assertion_count: int,
         task_quality: float = 1.0,
         source_accuracy: float = 1.0,
-        fidelity: Optional[float] = None
+        fidelity: Optional[float] = None,
+        identity: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
+        if not identity or any(not identity.get(k) for k in ("runtime_id", "workspace_id", "project_id", "session_id", "agent_id")):
+            raise ValueError("Complete identity is required for new experiment observations")
         compression_ratio = round(raw_token_estimate / max(1, token_count), 2)
         quota_tokens_saved = max(0, raw_token_estimate - token_count)
         eff_fidelity = fidelity if fidelity is not None else (1.0 if is_verified else 0.80)
@@ -88,6 +82,8 @@ class AutonomousExperimentRunner:
             "pareto_score": utility_score,
             "utility_score": utility_score
         }
+        metric_record.update(identity)
+        metric_record["identity_confidence"] = "observed"
 
         self.history.append(metric_record)
         self.current_turn_index += 1

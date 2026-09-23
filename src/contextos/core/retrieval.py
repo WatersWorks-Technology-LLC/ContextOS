@@ -23,13 +23,16 @@ class RetrievalCascade:
         self.coprocessor = coprocessor or OllamaCoprocessor()
         self.shared_semantic = shared_semantic_store
 
-    def retrieve(self, prompt: str, target_files: List[str] = None, top_k: int = 20, runtime_id: Optional[str] = "codex") -> Dict[str, Any]:
+    def retrieve(self, prompt: str, target_files: List[str] = None, top_k: int = 20,
+                 runtime_id: Optional[str] = "codex", workspace_id: Optional[str] = None,
+                 project_id: Optional[str] = None) -> Dict[str, Any]:
         candidates = []
 
         # 1. Semantic store assertions (client local + shared truth)
-        current_assertions = self.semantic.query_current_state(runtime_id=runtime_id)
+        current_assertions = self.semantic.query_current_state(runtime_id=runtime_id, workspace_id=workspace_id, project_id=project_id)
         if self.shared_semantic:
-            shared_assertions = self.shared_semantic.query_current_state(runtime_id=runtime_id)
+            shared_assertions = self.shared_semantic.query_current_state(runtime_id=None,
+                workspace_id=workspace_id, project_id=project_id)
             # Deduplicate by assertion_id
             seen_ids = {a["assertion_id"] for a in current_assertions}
             for sa in shared_assertions:

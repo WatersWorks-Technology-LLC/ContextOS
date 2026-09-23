@@ -22,6 +22,8 @@ from ..core.campaigns import CampaignManager, ContextCanary
 from ..core.monitors import ContinuousMonitors
 from ..core.daemon_workers import DaemonWorkerPool
 from ..core.goals import GoalEngine
+from ..identity import IdentityScope
+from ..core.tournament import CodecTournamentEngine
 
 class HookAdapter:
     """
@@ -53,6 +55,7 @@ class HookAdapter:
         self.safeguards = SafeguardManager(max_token_ceiling=self.config.budget.max_token_budget)
         self.self_healing = SelfHealingEngine(self.version_store)
         self.experimenter = AutonomousExperimentRunner(client_dir)
+        self.tournament = CodecTournamentEngine(self.experimenter)
         self.goals = GoalEngine(client_dir)
 
         # Context CI Engine
@@ -65,7 +68,8 @@ class HookAdapter:
         self.worker_pool.start_workers()
 
     def on_session_start(self, session_id: str = "default", matcher: str = "startup") -> Dict[str, Any]:
-        self.events.append_event("SessionStart", {"matcher": matcher}, session_id=session_id)
+        identity = IdentityScope.from_config(self.config, session_id)
+        self.events.append_event("SessionStart", {"matcher": matcher}, session_id=session_id, identity=identity)
         active_goal = self.goals.get_active_goal(session_id=session_id)
         stats = self.semantic.get_stats()
         
@@ -94,9 +98,10 @@ class HookAdapter:
         parent_commit: Optional[str] = None
     ) -> Dict[str, Any]:
         start_time = time.time()
+        identity = IdentityScope.from_config(self.config, session_id)
         
         # 1. Record raw event
-        self.events.append_event("UserPromptSubmit", {"prompt": prompt, "cwd": cwd}, session_id=session_id)
+        self.events.append_event("UserPromptSubmit", {"prompt": prompt, "cwd": cwd}, session_id=session_id, identity=identity)
 
         # Auto-detect or set goal if user prompt matches goal pattern
         if prompt.strip().startswith("/goal") or "Goal:" in prompt or "goal:" in prompt:
@@ -109,7 +114,8 @@ class HookAdapter:
                 extracted = [re.sub(r'^\d+\.\s*', '', c).strip() for c in re.split(r'(?=\d+\.\s*)', raw_criteria) if c.strip()]
                 criteria_list = [c for c in extracted if len(c) > 2]
                 clean_prompt = desc_part
-            self.goals.set_active_goal(clean_prompt, acceptance_criteria=criteria_list if criteria_list else None, session_id=session_id)
+            self.goals.set_active_goal(clean_prompt, acceptance_criteria=criteria_list if criteria_list else None, session_id=session_id,
+                runtime_id=identity.runtime_id, workspace_id=identity.workspace_id, project_id=identity.project_id, agent_id=identity.agent_id)
 
 
         # 2. Select production strategy via Canary & Experimenter
@@ -124,7 +130,8 @@ class HookAdapter:
         target_files = classification["target_files"] + under_alloc
 
         # 4. Multi-faceted retrieval cascade
-        retrieved = self.retrieval.retrieve(prompt, target_files=target_files)
+        retrieved = self.retrieval.retrieve(prompt, target_files=target_files, runtime_id=identity.runtime_id,
+            workspace_id=identity.workspace_id, project_id=identity.project_id)
 
         # 5. Current-state projection
         projection = CurrentStateProjector.project(retrieved["assertions"])
@@ -136,7 +143,8 @@ class HookAdapter:
         )
 
         # Inject Active Goal State into Invariants
-        active_goal = self.goals.get_active_goal(session_id=session_id)
+        active_goal = self.goals.get_active_goal(session_id=session_id, runtime_id=identity.runtime_id,
+            workspace_id=identity.workspace_id, project_id=identity.project_id, agent_id=identity.agent_id)
         if active_goal:
             goal_inv = f"ACTIVE_GOAL: {active_goal['description']} (Unverified Criteria: {sum(1 for ac in active_goal['acceptance_criteria'] if not ac['verified'])}/{len(active_goal['acceptance_criteria'])})"
             pinned_invariants.append(goal_inv)
@@ -152,18 +160,14 @@ class HookAdapter:
         raw_text_estimate = sum(len(f"{a.get('subject')} {a.get('predicate')} {a.get('object')}") // 4 for a in protected_assertions) + 300
 
         # 8. Heterogeneous / Self-Healing Compilation & Versioning
-        if codec_to_use == "hybrid_packet":
-            context_text, checksum = HeterogeneousPacketCompiler.compile_packet(alloc_assertions, alloc_invariants)
-            used_codec = "hybrid_packet"
-            commit = self.version_store.create_commit(context_text, alloc_assertions, alloc_invariants, used_codec, session_id, parent_commit)
-        else:
-            context_text, checksum, used_codec, commit = self.self_healing.attempt_recovery_compile(
-                alloc_assertions,
-                alloc_invariants,
-                attempted_codec=codec_to_use,
-                session_id=session_id,
-                parent_commit=parent_commit
-            )
+        tournament_identity = identity.as_dict()
+        tournament_identity["session_id"] = f"{identity.session_id}:turn:{self.experimenter.current_turn_index + 1}"
+        tournament = self.tournament.run_tournament(alloc_assertions, alloc_invariants, identity=tournament_identity)
+        context_text, checksum = HeterogeneousPacketCompiler.compile_packet(
+            alloc_assertions, alloc_invariants, section_codecs=tournament["section_codecs"])
+        used_codec = "hybrid_packet"
+        commit = self.version_store.create_commit(context_text, alloc_assertions, alloc_invariants,
+            used_codec, session_id, parent_commit, identity=identity)
 
         prep_time_ms = round((time.time() - start_time) * 1000, 2)
         is_verified = (used_codec == codec_to_use)
@@ -173,13 +177,18 @@ class HookAdapter:
 
         # Record metrics & update campaign
         score_record = self.experimenter.record_turn_metrics(
-            strategy_name=active_strategy["name"],
+            strategy_name="hybrid_packet",
             token_count=token_count,
             raw_token_estimate=raw_text_estimate,
             prep_latency_ms=prep_time_ms,
             is_verified=is_verified,
-            assertion_count=len(alloc_assertions)
+            assertion_count=len(alloc_assertions), identity={**identity.as_dict(), "turn_id": commit["commit_id"]}
         )
+        tournament_scores = {
+            "sections": tournament["section_codecs"],
+            "scores": tournament["section_winner_scores"],
+            "meta_strategy": "hybrid_packet"
+        }
 
         # Async Background Shadow Testing Task (Non-blocking P3 queue!)
         turn_id = commit["commit_id"]
@@ -189,22 +198,25 @@ class HookAdapter:
                 prompt=prompt,
                 assertions=alloc_assertions,
                 invariants=alloc_invariants,
-                production_strategy=active_strategy["name"],
-                production_token_count=token_count
+                production_strategy="hybrid_packet",
+                production_token_count=token_count,
+                identity=identity
             )
         )
 
         # Async Background Campaign Progress Recording
         self.worker_pool.enqueue_integrity(
             lambda: self.campaign_mgr.record_campaign_turn(
-                "hybrid-vs-ncc-tournament",
-                winner_strategy=active_strategy["name"],
-                score_delta=score_record["utility_score"]
+                "hybrid-section-codec-tournament",
+                winner_strategy="hybrid_packet",
+                score_delta=sum(tournament["section_winner_scores"].values()) / max(1, len(tournament["section_winner_scores"])),
+                identity=identity,
+                details={"section_codecs": tournament["section_codecs"], "section_scores": tournament["section_winner_scores"]}
             )
         )
 
         # Record counterfactual episode
-        self.replay_engine.record_episode(turn_id, prompt, alloc_assertions, alloc_invariants, "PASS")
+        self.replay_engine.record_episode(turn_id, prompt, alloc_assertions, alloc_invariants, "PASS", identity=identity)
 
         telemetry = {
             "retrieval_ms": round(prep_time_ms * 0.3, 2),
@@ -222,8 +234,10 @@ class HookAdapter:
             "additionalContext": context_text,
             "context_commit": checksum,
             "commit_id": commit["commit_id"],
-            "strategy_used": active_strategy["name"],
+            "strategy_used": "hybrid_packet",
             "codec_used": used_codec,
+            "section_codecs": tournament["section_codecs"],
+            "section_winner_scores": tournament["section_winner_scores"],
             "canary_stage": self.canary.get_status()["stage_name"],
             "confidence": 0.98 if is_verified else 0.85,
             "token_count": token_count,
@@ -243,17 +257,18 @@ class HookAdapter:
         }
 
     def on_post_tool_use(self, tool_name: str, tool_input: Dict[str, Any], tool_output: str, session_id: str = "default") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id)
         # Synchronously record checkpoint evidence into active goal
         goal, feedback_str = self.goals.record_checkpoint(tool_name, tool_input, tool_output, session_id=session_id)
 
         # Enqueue non-blocking async P1 task
         def async_post_tool_work():
-            sid = self.sources.put_source(tool_output, metadata={"tool": tool_name})
+            sid = self.sources.put_source(tool_output, metadata={"tool": tool_name}, identity=identity)
             self.events.append_event("PostToolUse", {
                 "tool_name": tool_name,
                 "source_id": sid,
                 "input_summary": str(tool_input)[:200]
-            }, session_id=session_id)
+            }, session_id=session_id, identity=identity)
 
         self.worker_pool.enqueue_ingest(async_post_tool_work)
         
@@ -262,7 +277,8 @@ class HookAdapter:
         return {}
 
     def on_pre_compact(self, session_id: str = "default") -> Dict[str, Any]:
-        self.events.append_event("PreCompact", {}, session_id=session_id)
+        identity = IdentityScope.from_config(self.config, session_id)
+        self.events.append_event("PreCompact", {}, session_id=session_id, identity=identity)
         active_assertions = self.semantic.query_current_state()
         pinned = self.safeguards.pinned_invariants
         snapshot = {
@@ -270,11 +286,12 @@ class HookAdapter:
             "pinned_invariants": pinned,
             "timestamp": time.time()
         }
-        sid = self.sources.put_source(str(snapshot), metadata={"kind": "pre_compact_snapshot"})
+        sid = self.sources.put_source(str(snapshot), metadata={"kind": "pre_compact_snapshot"}, identity=identity)
         return {"snapshot_id": sid, "status": "persisted"}
 
     def on_post_compact(self, session_id: str = "default") -> Dict[str, Any]:
-        self.events.append_event("PostCompact", {}, session_id=session_id)
+        identity = IdentityScope.from_config(self.config, session_id)
+        self.events.append_event("PostCompact", {}, session_id=session_id, identity=identity)
         active_goal = self.goals.get_active_goal(session_id=session_id)
         pinned = self.safeguards.pinned_invariants
         rehydrated_context = [
@@ -290,10 +307,13 @@ class HookAdapter:
         }
 
     def on_subagent_start(self, role: str, prompt: str, session_id: str = "default", parent_agent_id: str = "main") -> Dict[str, Any]:
-        self.events.append_event("SubagentStart", {"role": role, "prompt": prompt[:200]}, session_id=session_id)
-        subagent_info = self.goals.register_subagent(role, session_id=session_id, parent_agent_id=parent_agent_id)
+        identity = IdentityScope.from_config(self.config, session_id, parent_agent_id)
+        self.events.append_event("SubagentStart", {"role": role, "prompt": prompt[:200]}, session_id=session_id, identity=identity)
+        subagent_info = self.goals.register_subagent(subagent_id=role, subagent_role=role, session_id=session_id,
+            runtime_id=identity.runtime_id, workspace_id=identity.workspace_id, project_id=identity.project_id, parent_agent_id=parent_agent_id)
         classification = TaskClassifier.classify(prompt)
-        retrieved = self.retrieval.retrieve(prompt, target_files=classification["target_files"])
+        retrieved = self.retrieval.retrieve(prompt, target_files=classification["target_files"], runtime_id=identity.runtime_id,
+            workspace_id=identity.workspace_id, project_id=identity.project_id)
         context_text, _ = HeterogeneousPacketCompiler.compile_packet(retrieved["assertions"], [])
         
         goal_scope_str = f"\n- Inherited Session Goal: {subagent_info['inherited_goal_id']}" if subagent_info.get("inherited_goal_id") else ""
@@ -302,18 +322,19 @@ class HookAdapter:
         }
 
     def on_subagent_stop(self, role: str, result_text: str, session_id: str = "default"):
-        self.events.append_event("SubagentStop", {"role": role, "result_summary": result_text[:200]}, session_id=session_id)
-        self.sources.put_source(result_text, metadata={"kind": "subagent_result", "role": role})
+        identity = IdentityScope.from_config(self.config, session_id, role)
+        self.events.append_event("SubagentStop", {"role": role, "result_summary": result_text[:200]}, session_id=session_id, identity=identity)
+        self.sources.put_source(result_text, metadata={"kind": "subagent_result", "role": role}, identity=identity)
 
 
     def on_stop(self, final_text: str, session_id: str = "default") -> Dict[str, Any]:
+        identity = IdentityScope.from_config(self.config, session_id)
         def async_stop_work():
-            sid = self.sources.put_source(final_text, metadata={"kind": "final_response"})
-            self.events.append_event("Stop", {"source_id": sid}, session_id=session_id)
+            sid = self.sources.put_source(final_text, metadata={"kind": "final_response"}, identity=identity)
+            self.events.append_event("Stop", {"source_id": sid}, session_id=session_id, identity=identity)
 
         self.worker_pool.enqueue_ingest(async_stop_work)
 
         # Autonomous Goal Acceptance Evaluation
         eval_res = self.goals.evaluate_stop_condition(final_text, session_id=session_id)
         return eval_res
-

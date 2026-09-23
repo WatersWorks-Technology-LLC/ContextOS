@@ -1,0 +1,4 @@
+budget:
+  default_token_budget: 1500
+codec:
+  default_codec: ncc_vcl
