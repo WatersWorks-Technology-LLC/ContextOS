@@ -1,4 +1,5 @@
 import json
+from ._jsonfile import merge_save
 import math
 import re
 from pathlib import Path
@@ -24,8 +25,7 @@ class VectorIndex:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+        self.documents = merge_save(self.file_path, self.documents)
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]

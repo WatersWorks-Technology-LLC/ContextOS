@@ -1,4 +1,5 @@
 import json
+from ._jsonfile import merge_save
 import hashlib
 import time
 from pathlib import Path
@@ -26,8 +27,7 @@ class ContextVersionStore:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        self.versions = merge_save(self.file_path, self.versions)
 
     def create_commit(
         self,
