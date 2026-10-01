@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import file_lock, load_json_dict, write_json_atomic
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        write_json_atomic(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -75,8 +69,10 @@ class ContextVersionStore:
             "status": "active"  # active, rolled_back, failed
         }
         
-        self.versions[commit_id] = commit_record
-        self._save()
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            self.versions[commit_id] = commit_record
+            self._save()
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
