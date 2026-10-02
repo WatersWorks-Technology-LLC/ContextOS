@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from .jsonfile import load_json_dict, update_json_dict, write_json_atomic
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        write_json_atomic(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -75,8 +69,8 @@ class ContextVersionStore:
             "status": "active"  # active, rolled_back, failed
         }
         
-        self.versions[commit_id] = commit_record
-        self._save()
+        self.versions = update_json_dict(
+            self.file_path, lambda d: d.__setitem__(commit_id, commit_record))
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
@@ -176,9 +170,11 @@ class ContextVersionStore:
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
         """
         if commit_id in self.versions:
-            self.versions[commit_id]["status"] = "failed"
-            parent = self.versions[commit_id].get("parent_commit")
-            self._save()
+            def mark_failed(d):
+                if commit_id in d:
+                    d[commit_id]["status"] = "failed"
+            self.versions = update_json_dict(self.file_path, mark_failed)
+            parent = self.versions.get(commit_id, {}).get("parent_commit")
             if parent and parent in self.versions:
                 return self.versions[parent]
         
