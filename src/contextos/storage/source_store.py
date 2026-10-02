@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from ._jsonfile import load_json_dict, locked_update
 
 class SourceStore:
     """
@@ -14,17 +15,7 @@ class SourceStore:
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        return load_json_dict(self.file_path)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,18 +23,18 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
+        record = {
             "source_id": sid,
             "sha256": sha256,
             "content": content,
             "char_count": len(content),
-            "metadata": metadata or {}
+            "metadata": metadata or {},
+            **identity.as_dict(),
+            "identity_confidence": "observed",
         }
-        if identity:
-            self._sources[sid].update(identity.as_dict())
-            self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        with locked_update(self.file_path) as disk:
+            disk[sid] = record
+            self._sources = disk
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
