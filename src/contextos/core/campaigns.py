@@ -5,6 +5,7 @@ import statistics
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from ..identity import IdentityScope
+from ..storage._jsonfile import file_lock, load_json_dict, write_json_atomic
 
 class CampaignManager:
     """
@@ -18,27 +19,18 @@ class CampaignManager:
         self.campaigns: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.campaigns, f, indent=2)
+        write_json_atomic(self.file_path, self.campaigns)
 
-    def create_campaign(
-        self,
-        name: str,
-        target_turns: int = 500,
-        competitors: List[str] = None,
-        identity: Optional[IdentityScope] = None
-    ) -> Dict[str, Any]:
-        if identity is None:
-            raise ValueError("IdentityScope is required for new campaigns")
+    @staticmethod
+    def _key(name: str, identity: IdentityScope) -> str:
+        return f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}"
+
+    @staticmethod
+    def _new_campaign(name: str, target_turns: int, competitors: Optional[List[str]],
+                      identity: IdentityScope) -> Dict[str, Any]:
         campaign = {
             "campaign_id": f"CMP-{name}",
             "name": name,
@@ -54,9 +46,22 @@ class CampaignManager:
         }
         campaign.update(identity.as_dict())
         campaign["identity_confidence"] = "observed"
-        campaign_key = f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}"
-        self.campaigns[campaign_key] = campaign
-        self._save()
+        return campaign
+
+    def create_campaign(
+        self,
+        name: str,
+        target_turns: int = 500,
+        competitors: List[str] = None,
+        identity: Optional[IdentityScope] = None
+    ) -> Dict[str, Any]:
+        if identity is None:
+            raise ValueError("IdentityScope is required for new campaigns")
+        campaign = self._new_campaign(name, target_turns, competitors, identity)
+        with file_lock(self.file_path):
+            self.campaigns = self._load()
+            self.campaigns[self._key(name, identity)] = campaign
+            self._save()
         return campaign
 
     def record_campaign_turn(self, name: str, winner_strategy: str, score_delta: float,
@@ -64,32 +69,34 @@ class CampaignManager:
                              details: Optional[Dict[str, Any]] = None):
         if identity is None:
             raise ValueError("IdentityScope is required for campaign observations")
-        campaign_key = f"{identity.runtime_id}:{identity.workspace_id}:{identity.project_id}:{name}"
-        if campaign_key not in self.campaigns:
-            self.create_campaign(name, identity=identity)
+        campaign_key = self._key(name, identity)
+        with file_lock(self.file_path):
+            self.campaigns = self._load()
+            if campaign_key not in self.campaigns:
+                self.campaigns[campaign_key] = self._new_campaign(name, 500, None, identity)
 
-        c = self.campaigns[campaign_key]
-        if (c.get("runtime_id"), c.get("workspace_id"), c.get("project_id")) != (
-                identity.runtime_id, identity.workspace_id, identity.project_id):
-            return
-        if c["status"] != "RUNNING":
-            return
+            c = self.campaigns[campaign_key]
+            if (c.get("runtime_id"), c.get("workspace_id"), c.get("project_id")) != (
+                    identity.runtime_id, identity.workspace_id, identity.project_id):
+                return
+            if c["status"] != "RUNNING":
+                return
 
-        c["completed_turns"] += 1
-        c["updated_at"] = time.time()
-        c.setdefault("observations", []).append({
-            **identity.as_dict(),
-            "strategy": winner_strategy, "score_delta": score_delta, "timestamp": c["updated_at"],
-            "identity_confidence": "observed", "details": details or {}
-        })
-        c["leader_so_far"] = winner_strategy if winner_strategy in c["competitors"] else None
-        c["confidence"] = round(min(0.999, 0.50 + (c["completed_turns"] / (c["target_turns"] * 2.0))), 3)
+            c["completed_turns"] += 1
+            c["updated_at"] = time.time()
+            c.setdefault("observations", []).append({
+                **identity.as_dict(),
+                "strategy": winner_strategy, "score_delta": score_delta, "timestamp": c["updated_at"],
+                "identity_confidence": "observed", "details": details or {}
+            })
+            c["leader_so_far"] = winner_strategy if winner_strategy in c["competitors"] else None
+            c["confidence"] = round(min(0.999, 0.50 + (c["completed_turns"] / (c["target_turns"] * 2.0))), 3)
 
-        if c["completed_turns"] >= c["target_turns"]:
-            c["status"] = "COMPLETE"
-            c["completed_at"] = time.time()
+            if c["completed_turns"] >= c["target_turns"]:
+                c["status"] = "COMPLETE"
+                c["completed_at"] = time.time()
 
-        self._save()
+            self._save()
 
     def get_campaign(self, name: str, identity: Optional[IdentityScope] = None) -> Optional[Dict[str, Any]]:
         if identity:
@@ -173,14 +180,6 @@ class ContextCanary:
         return bucket < traffic_pct
 
     def log_incident(self, reason: str, metrics: Dict[str, Any]):
-        incidents = []
-        if self.incidents_path.exists():
-            try:
-                with open(self.incidents_path, "r", encoding="utf-8") as f:
-                    incidents = json.load(f)
-            except Exception:
-                incidents = []
-
         incident = {
             "incident_id": f"INC-{int(time.time()*1000)}",
             "timestamp": time.time(),
@@ -189,9 +188,10 @@ class ContextCanary:
             "reason": reason,
             "metrics": metrics
         }
-        incidents.append(incident)
-        with open(self.incidents_path, "w", encoding="utf-8") as f:
-            json.dump(incidents, f, indent=2)
+        with file_lock(self.incidents_path):
+            incidents = load_json_dict(self.incidents_path, list)
+            incidents.append(incident)
+            write_json_atomic(self.incidents_path, incidents)
 
     def record_eligible_turn(self, metrics: Dict[str, Any]) -> bool:
         """

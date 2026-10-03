@@ -40,3 +40,23 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_promote_assertion_creates_promoted_record(tmp_path):
+    from contextos.storage.semantic_store import SemanticStore
+    store = SemanticStore(tmp_path)
+    store.add_assertion("A1", "svc", "uses", "sqlite", scope="session")
+    promoted = store.promote_assertion("A1", "project")
+    assert promoted and promoted.startswith("AST-PROM-")
+    rows = {r["assertion_id"]: r for r in store.query_current_state(runtime_id=None)}
+    assert rows[promoted]["scope"] == "project"
+    assert rows[promoted]["origin_assertion_id"] == "A1"
+
+
+def test_record_closed_branch_carries_identity(tmp_path):
+    store = SemanticStore(tmp_path)
+    ident = IdentityScope("claude", "/ws/a", "proj_a", "s1", "main")
+    store.record_closed_branch("D1", "Opt", "why", "never", identity=ident)
+    assert len(store.query_conflicts_and_closed_branches(ident)["closed_branches"]) == 1
+    other = IdentityScope("claude", "/ws/b", "proj_b", "s1", "main")
+    assert store.query_conflicts_and_closed_branches(other)["closed_branches"] == []
