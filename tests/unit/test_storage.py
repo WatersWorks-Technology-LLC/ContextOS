@@ -51,3 +51,12 @@ def test_promote_assertion_creates_promoted_record(tmp_path):
     rows = {r["assertion_id"]: r for r in store.query_current_state(runtime_id=None)}
     assert rows[promoted]["scope"] == "project"
     assert rows[promoted]["origin_assertion_id"] == "A1"
+
+
+def test_record_closed_branch_carries_identity(tmp_path):
+    store = SemanticStore(tmp_path)
+    ident = IdentityScope("claude", "/ws/a", "proj_a", "s1", "main")
+    store.record_closed_branch("D1", "Opt", "why", "never", identity=ident)
+    assert len(store.query_conflicts_and_closed_branches(ident)["closed_branches"]) == 1
+    other = IdentityScope("claude", "/ws/b", "proj_b", "s1", "main")
+    assert store.query_conflicts_and_closed_branches(other)["closed_branches"] == []
