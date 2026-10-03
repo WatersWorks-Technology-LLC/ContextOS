@@ -16,3 +16,4 @@ UNKNOWN.egg-info/
 .contextos/*.lock
 .contextos/*.tmp
 .codex/
+*.egg-info/

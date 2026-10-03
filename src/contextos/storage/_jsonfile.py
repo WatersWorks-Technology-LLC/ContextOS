@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-def load_json_dict(path: Path) -> Dict[str, Any]:
-    """Read a JSON object; quarantine an unreadable file instead of letting a later save overwrite it."""
+def load_json_dict(path: Path, expected: type = dict) -> Any:
+    """Read a JSON object (or `expected` container type); quarantine an unreadable file instead of letting a later save overwrite it."""
     if not path.exists():
-        return {}
+        return expected()
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict):
+        if isinstance(data, expected):
             return data
     except (OSError, ValueError):
         pass
@@ -23,10 +23,10 @@ def load_json_dict(path: Path) -> Dict[str, Any]:
         os.replace(path, path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
     except OSError:
         pass
-    return {}
+    return expected()
 
 
-def write_json_atomic(path: Path, data: Dict[str, Any]) -> None:
+def write_json_atomic(path: Path, data: Any) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
