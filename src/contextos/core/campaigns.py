@@ -138,11 +138,9 @@ class ContextCanary:
 
     def _load(self) -> Dict[str, Any]:
         if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+            loaded = load_json_dict(self.file_path)
+            if loaded:
+                return loaded
         return {
             "current_stage": 1,
             "fresh_stage_turns": 0,
@@ -157,8 +155,13 @@ class ContextCanary:
     def _save(self):
         self.state["rolling_history"] = self.rolling_history[-200:]
         self.state["high_latency_window_violations"] = self.high_latency_window_violations
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2)
+        write_json_atomic(self.file_path, self.state)
+
+    def _refresh(self):
+        """Reload on-disk state so a read-modify-write under the lock never applies a stale cache."""
+        self.state = self._load()
+        self.rolling_history = self.state.get("rolling_history", [])
+        self.high_latency_window_violations = self.state.get("high_latency_window_violations", 0)
 
     @staticmethod
     def is_session_assigned_to_canary(
@@ -194,6 +197,11 @@ class ContextCanary:
             write_json_atomic(self.incidents_path, incidents)
 
     def record_eligible_turn(self, metrics: Dict[str, Any]) -> bool:
+        with file_lock(self.file_path):
+            self._refresh()
+            return self._record_eligible_turn(metrics)
+
+    def _record_eligible_turn(self, metrics: Dict[str, Any]) -> bool:
         """
         Evaluates turn metrics against unified SLOs:
         - Instant Failures: critical_fidelity < 1.0, critical_provenance < 1.0, workspace_leaks > 0, catastrophic_errors > 0.
@@ -212,7 +220,7 @@ class ContextCanary:
 
         if instant_failures:
             reason = "[INSTANT FAIL] " + "; ".join(instant_failures)
-            self.trigger_rollback(reason, metrics)
+            self._rollback(reason, metrics)
             return False
 
         self.rolling_history.append(metrics)
@@ -225,7 +233,7 @@ class ContextCanary:
             avg_src_acc = sum(m.get("source_accuracy", 1.0) for m in recent_100) / len(recent_100)
             if avg_src_acc < 0.95:
                 reason = f"[WINDOWED FAIL] Rolling source_accuracy {avg_src_acc:.3f} < 0.95 over last {len(recent_100)} turns"
-                self.trigger_rollback(reason, metrics)
+                self._rollback(reason, metrics)
                 return False
 
             recent_50 = self.rolling_history[-50:]
@@ -238,7 +246,7 @@ class ContextCanary:
                 self.high_latency_window_violations += 1
                 if self.high_latency_window_violations >= 3:
                     reason = f"[WINDOWED FAIL] P95 latency ({p95_lat:.2f}ms) exceeded 10.0ms across {self.high_latency_window_violations} consecutive 50-turn windows"
-                    self.trigger_rollback(reason, metrics)
+                    self._rollback(reason, metrics)
                     return False
             else:
                 self.high_latency_window_violations = max(0, self.high_latency_window_violations - 1)
@@ -249,6 +257,11 @@ class ContextCanary:
         return True
 
     def promote_stage(self) -> Tuple[bool, str]:
+        with file_lock(self.file_path):
+            self._refresh()
+            return self._promote_stage()
+
+    def _promote_stage(self) -> Tuple[bool, str]:
         curr = self.state["current_stage"]
         if curr >= 5:
             return False, "Already at maximum Stage 5 (100% Production Default)."
@@ -266,6 +279,11 @@ class ContextCanary:
         return True, f"Promoted to Stage {curr + 1} ({self.CANARY_STAGES[curr + 1]['name']})."
 
     def trigger_rollback(self, reason: str, metrics: Optional[Dict[str, Any]] = None):
+        with file_lock(self.file_path):
+            self._refresh()
+            self._rollback(reason, metrics)
+
+    def _rollback(self, reason: str, metrics: Optional[Dict[str, Any]] = None):
         self.log_incident(reason, metrics or {})
         self.state["current_stage"] = 0
         self.state["fresh_stage_turns"] = 0
