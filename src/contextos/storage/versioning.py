@@ -128,6 +128,11 @@ class ContextVersionStore:
         """
         Repairs any self-referential parents or cycles in the stored version DAG.
         """
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            return self._repair_dag_locked()
+
+    def _repair_dag_locked(self) -> Dict[str, Any]:
         repaired_self = 0
         for cid, record in self.versions.items():
             if record.get("parent_commit") == cid:
@@ -171,10 +176,13 @@ class ContextVersionStore:
         """
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
         """
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            if commit_id in self.versions:
+                self.versions[commit_id]["status"] = "failed"
+                self._save()
         if commit_id in self.versions:
-            self.versions[commit_id]["status"] = "failed"
             parent = self.versions[commit_id].get("parent_commit")
-            self._save()
             if parent and parent in self.versions:
                 return self.versions[parent]
         
