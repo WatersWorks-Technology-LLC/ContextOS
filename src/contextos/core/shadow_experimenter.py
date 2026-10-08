@@ -109,6 +109,8 @@ class CounterfactualReplayEngine:
                     continue
                 try:
                     ep = json.loads(line)
+                    if any(ep.get(k) != v for k, v in identity.as_dict().items()):
+                        continue
                     shadow_tester.run_shadow_eval(
                         turn_id=f"REPLAY-{ep['turn_id']}",
                         prompt=ep["prompt"],
