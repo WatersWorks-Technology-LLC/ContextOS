@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from ..identity import IdentityScope
@@ -196,15 +197,23 @@ class SemanticStore:
                 (now, now, new_assertion_id, old_assertion_id)
             )
 
-    def record_closed_branch(self, decision_id: str, rejected_option: str, rationale: str, condition_to_reopen: str):
+    def record_closed_branch(self, decision_id: str, rejected_option: str, rationale: str, condition_to_reopen: str,
+                             identity: Optional[IdentityScope] = None):
         now = time.time()
         aid = f"REJ-{decision_id}"
+        ident = identity.as_dict() if identity else {}
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO assertions 
-                   (assertion_id, kind, subject, predicate, object, status, confidence, decision_rationale, closed_branch_condition, observed_at, created_at)
-                   VALUES (?, 'decision', ?, 'rejected_option', ?, 'rejected', 1.0, ?, ?, ?, ?)""",
-                (aid, decision_id, rejected_option, rationale, condition_to_reopen, now, now)
+                   (assertion_id, kind, subject, predicate, object, status, confidence, decision_rationale, closed_branch_condition, observed_at, created_at,
+                    runtime_id, workspace_id, project_id, producer_runtime, origin_runtime, origin_session, origin_agent)
+                   VALUES (?, 'decision', ?, 'rejected_option', ?, 'rejected', 1.0, ?, ?, ?, ?,
+                           ?, ?, ?, ?, ?, ?, ?)""",
+                (aid, decision_id, rejected_option, rationale, condition_to_reopen, now, now,
+                 ident.get("runtime_id", "codex"), ident.get("workspace_id", "default"),
+                 ident.get("project_id", "default"), ident.get("runtime_id", "codex"),
+                 ident.get("runtime_id", "codex"), ident.get("session_id", "default"),
+                 ident.get("agent_id", "main"))
             )
         return aid
 
