@@ -40,3 +40,25 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_json_stores_do_not_lose_concurrent_writes(tmp_dir):
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    a, b = SourceStore(tmp_dir), SourceStore(tmp_dir)
+    sa = a.put_source("from A", identity=identity)
+    sb = b.put_source("from B", identity=identity)
+    fresh = SourceStore(tmp_dir)
+    assert fresh.get_source(sa) and fresh.get_source(sb)
+
+    va, vb = VectorIndex(tmp_dir), VectorIndex(tmp_dir)
+    va.add_document("d1", "alpha")
+    vb.add_document("d2", "beta")
+    assert set(VectorIndex(tmp_dir).documents) == {"d1", "d2"}
+
+
+def test_corrupt_source_file_is_preserved_not_overwritten(tmp_dir):
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    (tmp_dir / "sources.json").write_text('{"SRC-x": {"content": "precious"')  # truncated
+    ss = SourceStore(tmp_dir)
+    ss.put_source("new", identity=identity)
+    assert any("precious" in p.read_text() for p in tmp_dir.glob("sources.json.corrupt-*"))

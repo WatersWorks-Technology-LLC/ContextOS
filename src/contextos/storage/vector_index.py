@@ -2,6 +2,7 @@ import json
 import math
 import re
 from pathlib import Path
+from .json_state import load_dict, merge_save
 from typing import List, Dict, Any, Tuple
 
 class VectorIndex:
@@ -15,17 +16,10 @@ class VectorIndex:
         self.documents: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+        self.documents.update(merge_save(self.file_path, self.documents))
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
