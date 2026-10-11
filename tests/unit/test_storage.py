@@ -60,3 +60,15 @@ def test_record_closed_branch_carries_identity(tmp_path):
     assert len(store.query_conflicts_and_closed_branches(ident)["closed_branches"]) == 1
     other = IdentityScope("claude", "/ws/b", "proj_b", "s1", "main")
     assert store.query_conflicts_and_closed_branches(other)["closed_branches"] == []
+
+
+def test_closed_branch_same_decision_id_does_not_overwrite_other_identity(tmp_path):
+    store = SemanticStore(tmp_path)
+    a = IdentityScope("claude", "/ws/a", "proj_a", "s1", "main")
+    b = IdentityScope("claude", "/ws/b", "proj_b", "s1", "main")
+    store.record_closed_branch("D1", "OptA", "why a", "never", identity=a)
+    store.record_closed_branch("D1", "OptB", "why b", "never", identity=b)
+    rows_a = store.query_conflicts_and_closed_branches(a)["closed_branches"]
+    assert [r["object"] for r in rows_a] == ["OptA"]
+    rows_b = store.query_conflicts_and_closed_branches(b)["closed_branches"]
+    assert [r["object"] for r in rows_b] == ["OptB"]

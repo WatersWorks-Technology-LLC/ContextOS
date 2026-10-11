@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 import json
 import time
@@ -200,8 +201,13 @@ class SemanticStore:
     def record_closed_branch(self, decision_id: str, rejected_option: str, rationale: str, condition_to_reopen: str,
                              identity: Optional[IdentityScope] = None):
         now = time.time()
-        aid = f"REJ-{decision_id}"
         ident = identity.as_dict() if identity else {}
+        aid = f"REJ-{decision_id}"
+        if identity:
+            # assertion_id is the primary key; qualify it so INSERT OR REPLACE
+            # cannot overwrite another runtime/workspace/project's decision.
+            scope_key = ":".join((identity.runtime_id, identity.workspace_id, identity.project_id))
+            aid += "-" + hashlib.sha256(scope_key.encode("utf-8")).hexdigest()[:8]
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO assertions 
