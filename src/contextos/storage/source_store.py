@@ -42,6 +42,8 @@ class SourceStore:
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        if source_id not in self._sources:
+            self._sources = self._load()  # another process may have written it
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
@@ -49,6 +51,8 @@ class SourceStore:
                     allow_legacy: bool = True) -> Dict[str, Any]:
         result = {}
         total_chars = 0
+        if any(sid not in self._sources for sid in source_ids):
+            self._sources = self._load()
         for sid in source_ids:
             if sid in self._sources:
                 payload = self._sources[sid]
