@@ -1,5 +1,9 @@
 import json
 import hashlib
+import os
+import shutil
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -19,12 +23,33 @@ class SourceStore:
                 with open(self.file_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
+                # Keep the unreadable file as evidence instead of letting the
+                # next save silently overwrite it.
+                backup = self.file_path.with_name(f"{self.file_path.name}.corrupt-{int(time.time())}")
+                try:
+                    shutil.copy2(self.file_path, backup)
+                except OSError:
+                    pass
                 return {}
         return {}
 
+    @contextmanager
+    def _locked(self):
+        """Serialize read-modify-write cycles across processes."""
+        lock_path = self.file_path.with_name(self.file_path.name + ".lock")
+        with open(lock_path, "a") as lock:
+            try:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            except ImportError:  # non-POSIX: best effort
+                pass
+            yield
+
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._sources, f, indent=2)
+        os.replace(tmp, self.file_path)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,6 +57,12 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
+        with self._locked():
+            self._sources = self._load()  # pick up other writers' changes
+            self._put_locked(sid, sha256, content, metadata, identity)
+        return sid
+
+    def _put_locked(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,9 +75,10 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        if source_id not in self._sources:
+            self._sources = self._load()
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
@@ -54,6 +86,8 @@ class SourceStore:
                     allow_legacy: bool = True) -> Dict[str, Any]:
         result = {}
         total_chars = 0
+        if any(sid not in self._sources for sid in source_ids):
+            self._sources = self._load()
         for sid in source_ids:
             if sid in self._sources:
                 payload = self._sources[sid]
