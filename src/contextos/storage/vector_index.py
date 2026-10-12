@@ -44,6 +44,7 @@ class VectorIndex:
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
         query_tokens = self._tokenize(query)
+        self.documents = self._load()
         if not query_tokens or not self.documents:
             return []
 
