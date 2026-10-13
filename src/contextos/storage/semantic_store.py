@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import uuid
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional

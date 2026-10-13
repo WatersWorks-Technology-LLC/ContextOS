@@ -40,3 +40,19 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_unit_semantic_store_promote_assertion_preserves_origin(tmp_dir):
+    sem = SemanticStore(tmp_dir)
+    sem.add_assertion("A1", "Auth", "uses", "JWT", scope="session",
+                      runtime_id="codex", workspace_id="ws", project_id="proj",
+                      origin_session="s1", origin_agent="main", decision_rationale="why")
+    promoted_id = sem.promote_assertion("A1", "project")
+    assert promoted_id and promoted_id.startswith("AST-PROM-")
+    promoted = next(a for a in sem.query_current_state(runtime_id=None) if a["assertion_id"] == promoted_id)
+    assert promoted["scope"] == "project"
+    assert promoted["origin_assertion_id"] == "A1"
+    assert (promoted["origin_session"], promoted["origin_agent"]) == ("s1", "main")
+    assert (promoted["workspace_id"], promoted["project_id"]) == ("ws", "proj")
+    assert sem.promote_assertion("missing", "project") is None
+    assert sem.promote_assertion("A1", "bogus") is None
