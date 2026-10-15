@@ -137,6 +137,12 @@ class SemanticStore:
     ) -> str:
         now = time.time()
         with self._get_conn() as conn:
+            existing = conn.execute(
+                "SELECT runtime_id, workspace_id, project_id FROM assertions WHERE assertion_id = ?",
+                (assertion_id,)).fetchone()
+            if existing is not None and tuple(existing) != (runtime_id, workspace_id, project_id):
+                # INSERT OR REPLACE must never clobber a row owned by another identity.
+                raise ValueError(f"assertion_id {assertion_id} already exists in a different runtime/workspace/project")
             conn.execute(
                 """INSERT OR REPLACE INTO assertions 
                    (assertion_id, entity_id, kind, subject, predicate, object, status, scope, runtime_id, workspace_id, project_id, producer_runtime,
