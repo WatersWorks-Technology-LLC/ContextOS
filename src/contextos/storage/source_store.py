@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from ._jsonfile import atomic_write_json, file_lock, load_json
 
 class SourceStore:
     """
@@ -14,17 +15,10 @@ class SourceStore:
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        atomic_write_json(self.file_path, self._sources)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,6 +26,12 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
+        with file_lock(self.file_path):
+            self._sources = self._load()  # pick up other processes' writes
+            self._put(sid, sha256, content, metadata, identity)
+        return sid
+
+    def _put(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,7 +44,6 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
         return self._sources.get(source_id)
