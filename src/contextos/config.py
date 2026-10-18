@@ -1,7 +1,10 @@
+import logging
 import os
 import yaml
 from pathlib import Path
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("ContextOS.Config")
 
 class StorageConfig(BaseModel):
     data_dir: Path = Field(default_factory=lambda: Path(".contextos"))
@@ -45,7 +48,7 @@ class ContextOSConfig(BaseModel):
                 data.setdefault("workspace_id", str(ws.resolve()))
                 return cls(**data)
             except Exception:
-                pass
+                logger.warning("Ignoring unreadable %s; falling back to default config", cfg_file, exc_info=True)
         return cls(workspace_dir=ws, client_id=cid, project_id=pid or "default", workspace_id=str(ws.resolve()))
 
     def ensure_directories(self) -> Path:
