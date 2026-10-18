@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from ..identity import IdentityScope
@@ -171,13 +172,15 @@ class SemanticStore:
             conn.execute(
                 """INSERT INTO assertions 
                    (assertion_id, entity_id, kind, subject, predicate, object, status, scope, runtime_id, workspace_id, project_id, producer_runtime,
-                    origin_runtime, origin_session, origin_agent, origin_assertion_id,
+                    origin_runtime, origin_session, origin_agent, origin_turn, origin_assertion_id,
+                    identity_confidence,
                     confidence, source_ref, decision_rationale, closed_branch_condition, observed_at, valid_from, valid_until, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     promoted_id, a.get("entity_id"), a.get("kind"), a.get("subject"), a.get("predicate"), a.get("object"),
                     target_scope, a.get("runtime_id"), a.get("workspace_id"), a.get("project_id"), a.get("producer_runtime"),
-                    a.get("producer_runtime"), a.get("origin_session"), a.get("origin_agent"), assertion_id,
+                    a.get("producer_runtime"), a.get("origin_session"), a.get("origin_agent"), a.get("origin_turn"), assertion_id,
+                    a.get("identity_confidence") or "observed",
                     a.get("confidence", 1.0), a.get("source_ref"), f"Promoted ({promotion_reason}): {a.get('decision_rationale') or ''}",
                     a.get("closed_branch_condition"), now, now, None, now
                 )

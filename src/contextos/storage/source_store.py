@@ -1,5 +1,10 @@
+import fcntl
 import json
 import hashlib
+import os
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -19,12 +24,37 @@ class SourceStore:
                 with open(self.file_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
+                # Never let the next save silently destroy an unreadable file.
+                backup = self.file_path.with_name(f"{self.file_path.name}.corrupt-{int(time.time() * 1000)}")
+                try:
+                    os.replace(self.file_path, backup)
+                except OSError:
+                    pass
                 return {}
         return {}
 
+    @contextmanager
+    def _locked(self):
+        """Cross-process exclusive lock so concurrent writers cannot lose updates."""
+        with open(self.file_path.with_name(self.file_path.name + ".lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, prefix=self.file_path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._sources, f, indent=2)
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,18 +62,24 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
-            "source_id": sid,
-            "sha256": sha256,
-            "content": content,
-            "char_count": len(content),
-            "metadata": metadata or {}
-        }
-        if identity:
+        with self._locked():
+            # Merge with whatever other processes wrote since we last looked.
+            self._sources = self._load()
+            existing = self._sources.get(sid)
+            if existing and not source_id and any(existing.get(k) != v for k, v in identity.as_dict().items()):
+                # Same content from another identity must not rebind the first owner's record.
+                suffix = hashlib.sha256(identity.key().encode("utf-8")).hexdigest()[:8]
+                sid = f"{sid}-{suffix}"
+            self._sources[sid] = {
+                "source_id": sid,
+                "sha256": sha256,
+                "content": content,
+                "char_count": len(content),
+                "metadata": metadata or {}
+            }
             self._sources[sid].update(identity.as_dict())
             self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+            self._save()
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
