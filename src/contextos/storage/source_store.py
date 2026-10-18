@@ -37,6 +37,11 @@ class SourceStore:
         entry["identity_confidence"] = "observed"
         with file_lock(self.file_path):
             self._sources = self._load()
+            existing = self._sources.get(sid)
+            if existing and not source_id and any(existing.get(k) != v for k, v in identity.as_dict().items()):
+                # Same content from another identity must not rebind the first owner's record.
+                sid = f"{sid}-{hashlib.sha256(identity.key().encode('utf-8')).hexdigest()[:8]}"
+                entry["source_id"] = sid
             self._sources[sid] = entry
             self._save()
         return sid
