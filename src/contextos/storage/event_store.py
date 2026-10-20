@@ -1,10 +1,14 @@
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
 from ..identity import IdentityScope
+from ._redact import redact
+
+logger = logging.getLogger("ContextOS.EventStore")
 
 class EventStore:
     """
@@ -29,7 +33,7 @@ class EventStore:
             "identity_confidence": "observed",
             "turn_id": turn_id,
             "type": event_type,
-            "payload": payload
+            "payload": redact(payload)
         }
         with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
@@ -47,11 +51,15 @@ class EventStore:
                     continue
                 try:
                     evt = json.loads(line)
-                    if identity and any(evt.get(k) != v for k, v in identity.as_dict().items()):
-                        continue
-                    if session_id and evt.get("session_id") != session_id:
-                        continue
-                    events.append(evt)
-                except Exception:
+                except ValueError:
+                    logger.warning("Skipping unparseable line in %s", self.file_path)
                     continue
+                if not isinstance(evt, dict):
+                    logger.warning("Skipping non-object line in %s", self.file_path)
+                    continue
+                if identity and any(evt.get(k) != v for k, v in identity.as_dict().items()):
+                    continue
+                if session_id and evt.get("session_id") != session_id:
+                    continue
+                events.append(evt)
         return list(events)
