@@ -6,6 +6,7 @@ from ..codecs.heterogeneous_compiler import HeterogeneousPacketCompiler
 from ..codecs.ncc_vcl import NCCVCLCodec
 from ..codecs.structured_text import StructuredTextCodec
 from ..identity import IdentityScope
+from ..storage._redact import redact_text
 
 class ShadowTester:
     """
@@ -85,10 +86,10 @@ class CounterfactualReplayEngine:
         episode = {
             "turn_id": turn_id,
             "timestamp": time.time(),
-            "prompt": prompt,
+            "prompt": redact_text(prompt),
             "assertion_count": len(assertions),
             "invariant_count": len(invariants),
-            "codex_result_summary": result[:200]
+            "codex_result_summary": redact_text(result)[:200]
         }
         episode.update(identity.as_dict())
         episode["identity_confidence"] = "observed"

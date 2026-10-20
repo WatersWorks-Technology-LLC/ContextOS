@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
 from ..identity import IdentityScope
+from ._redact import redact
 
 logger = logging.getLogger("ContextOS.EventStore")
 
@@ -32,7 +33,7 @@ class EventStore:
             "identity_confidence": "observed",
             "turn_id": turn_id,
             "type": event_type,
-            "payload": payload
+            "payload": redact(payload)
         }
         with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
