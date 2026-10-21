@@ -3,6 +3,7 @@ import math
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+from ._jsonfile import file_lock, read_json_dict, write_json_atomic
 
 class VectorIndex:
     """
@@ -24,8 +25,7 @@ class VectorIndex:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+        write_json_atomic(self.file_path, self.documents)
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
@@ -36,14 +36,19 @@ class VectorIndex:
         for t in tokens:
             tf[t] = tf.get(t, 0) + 1
         
-        self.documents[doc_id] = {
+        doc = {
             "doc_id": doc_id,
             "content": content,
             "tokens": tokens,
             "tf": tf,
             "metadata": metadata or {}
         }
-        self._save()
+        # Merge into the on-disk state so other processes' writes are not lost.
+        with file_lock(self.file_path):
+            if self.file_path.exists():
+                self.documents = read_json_dict(self.file_path)
+            self.documents[doc_id] = doc
+            self._save()
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
         query_tokens = self._tokenize(query)
