@@ -1,5 +1,8 @@
 import json
 import hashlib
+import os
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -22,9 +25,33 @@ class SourceStore:
                 return {}
         return {}
 
+    @contextmanager
+    def _file_lock(self):
+        """Cross-process exclusive lock so concurrent writers cannot lose updates."""
+        lock_path = self.file_path.with_name(self.file_path.name + ".lock")
+        with open(lock_path, "a+") as lock:
+            try:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            except ImportError:  # non-POSIX: best effort
+                pass
+            yield
+
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        """Atomically replace the file (caller holds the lock)."""
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, prefix=self.file_path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._sources, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,6 +59,12 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
+        with self._file_lock():
+            self._sources = self._load()  # merge writes made by other processes
+            self._put_locked(sid, sha256, content, metadata, identity)
+        return sid
+
+    def _put_locked(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,9 +77,10 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        if source_id not in self._sources:
+            self._sources = self._load()
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
@@ -54,6 +88,8 @@ class SourceStore:
                     allow_legacy: bool = True) -> Dict[str, Any]:
         result = {}
         total_chars = 0
+        if any(sid not in self._sources for sid in source_ids):
+            self._sources = self._load()
         for sid in source_ids:
             if sid in self._sources:
                 payload = self._sources[sid]

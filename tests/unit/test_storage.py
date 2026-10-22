@@ -40,3 +40,24 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_source_store_concurrent_writers_do_not_lose_sources(tmp_dir):
+    """Two SourceStore instances (e.g. two processes) sharing a file must both persist."""
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    a = SourceStore(tmp_dir)
+    b = SourceStore(tmp_dir)
+    sid_a = a.put_source("from A", identity=identity)
+    sid_b = b.put_source("from B", identity=identity)
+    fresh = SourceStore(tmp_dir)
+    assert fresh.get_source(sid_a) is not None
+    assert fresh.get_source(sid_b) is not None
+    # A also sees B's write on read
+    assert a.get_source(sid_b)["content"] == "from B"
+
+
+def test_source_store_save_is_atomic_and_leaves_no_temp_files(tmp_dir):
+    identity = IdentityScope("codex", "workspace", "project", "s1", "main")
+    ss = SourceStore(tmp_dir)
+    ss.put_source("x", identity=identity)
+    assert not [p.name for p in tmp_dir.iterdir() if p.name.endswith(".tmp")]
