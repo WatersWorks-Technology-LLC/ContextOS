@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from .jsonfile import merge_save
 
 class ContextVersionStore:
     """
@@ -25,9 +26,8 @@ class ContextVersionStore:
                 return {}
         return {}
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+    def _save(self, dirty=None):
+        self.versions = merge_save(self.file_path, self.versions, dirty)
 
     def create_commit(
         self,
@@ -76,7 +76,7 @@ class ContextVersionStore:
         }
         
         self.versions[commit_id] = commit_record
-        self._save()
+        self._save([commit_id])
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
@@ -178,7 +178,7 @@ class ContextVersionStore:
         if commit_id in self.versions:
             self.versions[commit_id]["status"] = "failed"
             parent = self.versions[commit_id].get("parent_commit")
-            self._save()
+            self._save([commit_id])
             if parent and parent in self.versions:
                 return self.versions[parent]
         

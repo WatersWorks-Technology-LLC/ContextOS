@@ -3,6 +3,7 @@ import math
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+from .jsonfile import merge_save
 
 class VectorIndex:
     """
@@ -23,9 +24,8 @@ class VectorIndex:
                 return {}
         return {}
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+    def _save(self, dirty=None):
+        self.documents = merge_save(self.file_path, self.documents, dirty)
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
@@ -43,7 +43,7 @@ class VectorIndex:
             "tf": tf,
             "metadata": metadata or {}
         }
-        self._save()
+        self._save([doc_id])
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
         query_tokens = self._tokenize(query)
