@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from .jsonfile import load_dict, merge_save
 
 class SourceStore:
     """
@@ -14,17 +15,10 @@ class SourceStore:
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_dict(self.file_path)
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+    def _save(self, changed: Optional[set] = None):
+        self._sources = merge_save(self.file_path, self._sources, changed)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -43,7 +37,7 @@ class SourceStore:
             self._sources[sid].update(identity.as_dict())
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        self._save({sid})
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:

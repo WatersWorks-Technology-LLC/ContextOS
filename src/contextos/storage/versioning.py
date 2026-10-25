@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from .jsonfile import load_dict, merge_save
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_dict(self.file_path)
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+    def _save(self, changed: Optional[set] = None):
+        self.versions = merge_save(self.file_path, self.versions, changed)
 
     def create_commit(
         self,
@@ -76,7 +70,7 @@ class ContextVersionStore:
         }
         
         self.versions[commit_id] = commit_record
-        self._save()
+        self._save({commit_id})
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
