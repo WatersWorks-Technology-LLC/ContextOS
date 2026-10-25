@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import load_json, locked, save_json
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        save_json(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -41,6 +35,14 @@ class ContextVersionStore:
     ) -> Dict[str, Any]:
         if identity is None:
             raise ValueError("IdentityScope is required for new versions")
+        with locked(self.file_path):
+            # Re-read so writes from other processes are merged, not overwritten.
+            self.versions = self._load()
+            return self._create_commit_locked(context_text, assertions, invariants, strategy_name,
+                                              session_id, parent_commit, identity)
+
+    def _create_commit_locked(self, context_text, assertions, invariants, strategy_name,
+                              session_id, parent_commit, identity) -> Dict[str, Any]:
         content_hash = hashlib.sha256(context_text.encode("utf-8")).hexdigest()[:10]
         commit_id = f"CMT-{content_hash}"
         

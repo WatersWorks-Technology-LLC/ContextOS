@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from ..identity import IdentityScope
