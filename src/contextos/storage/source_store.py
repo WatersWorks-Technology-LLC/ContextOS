@@ -1,4 +1,5 @@
 import json
+from .json_file import load_json_dict, merge_save_json_dict
 import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -14,17 +15,10 @@ class SourceStore:
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        merge_save_json_dict(self.file_path, self._sources)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
