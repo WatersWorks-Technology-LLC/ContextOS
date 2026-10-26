@@ -40,3 +40,17 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_promote_assertion_creates_promoted_record_with_origin(tmp_path):
+    from contextos.storage.semantic_store import SemanticStore
+    store = SemanticStore(tmp_path)
+    store.add_assertion("A1", "svc", "uses", "sqlite", scope="session", origin_session="s1")
+    promoted_id = store.promote_assertion("A1", "workspace")
+    assert promoted_id and promoted_id.startswith("AST-PROM-")
+    row = [r for r in store.search_assertions(promoted_id)][0]
+    assert row["scope"] == "workspace"
+    assert row["origin_assertion_id"] == "A1"
+    assert row["origin_session"] == "s1"
+    assert store.promote_assertion("A1", "bogus") is None
+    assert store.promote_assertion("missing", "workspace") is None
