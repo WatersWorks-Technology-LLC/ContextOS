@@ -3,6 +3,7 @@ import math
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+from ._jsonfile import locked_update
 
 class VectorIndex:
     """
@@ -23,9 +24,12 @@ class VectorIndex:
                 return {}
         return {}
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+    def _save(self, ids=None):
+        """Persist only `ids` (default: all) so other processes' records aren't overwritten."""
+        with locked_update(self.file_path) as disk:
+            for key in (self.documents if ids is None else ids):
+                disk[key] = self.documents[key]
+            self.documents = disk
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
@@ -43,7 +47,7 @@ class VectorIndex:
             "tf": tf,
             "metadata": metadata or {}
         }
-        self._save()
+        self._save([doc_id])
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
         query_tokens = self._tokenize(query)

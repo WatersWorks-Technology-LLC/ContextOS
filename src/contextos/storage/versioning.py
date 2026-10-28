@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import locked_update
 
 class ContextVersionStore:
     """
@@ -25,9 +26,12 @@ class ContextVersionStore:
                 return {}
         return {}
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+    def _save(self, ids=None):
+        """Persist only `ids` (default: all) so other processes' records aren't overwritten."""
+        with locked_update(self.file_path) as disk:
+            for key in (self.versions if ids is None else ids):
+                disk[key] = self.versions[key]
+            self.versions = disk
 
     def create_commit(
         self,
@@ -76,7 +80,7 @@ class ContextVersionStore:
         }
         
         self.versions[commit_id] = commit_record
-        self._save()
+        self._save([commit_id])
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
@@ -178,7 +182,7 @@ class ContextVersionStore:
         if commit_id in self.versions:
             self.versions[commit_id]["status"] = "failed"
             parent = self.versions[commit_id].get("parent_commit")
-            self._save()
+            self._save([commit_id])
             if parent and parent in self.versions:
                 return self.versions[parent]
         
