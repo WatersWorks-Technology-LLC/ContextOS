@@ -25,7 +25,7 @@ class EventStore:
             raise ValueError("IdentityScope is required for new events")
         identity_data = identity.as_dict()
         event = {
-            "event_id": f"EVT-{uuid.uuid4().hex[:8]}",
+            "event_id": f"EVT-{uuid.uuid4().hex}",
             "timestamp": time.time(),
             "iso_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             **identity_data,
