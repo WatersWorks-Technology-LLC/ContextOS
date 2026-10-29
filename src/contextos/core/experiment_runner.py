@@ -3,6 +3,7 @@ import math
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from ..storage._jsonfile import file_lock, load_json_dict, write_json_atomic
 
 class AutonomousExperimentRunner:
     """
@@ -20,17 +21,10 @@ class AutonomousExperimentRunner:
         self.current_turn_index = len(self.history)
 
     def _load(self) -> List[Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return []
-        return []
+        return load_json_dict(self.file_path, list)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.history, f, indent=2)
+        write_json_atomic(self.file_path, self.history)
 
     def get_next_strategy(self) -> Dict[str, Any]:
         """
@@ -69,7 +63,7 @@ class AutonomousExperimentRunner:
         utility_score = round((f_factor * q_factor * s_factor * compression_ratio) / (1.0 + latency_sec), 3)
 
         metric_record = {
-            "turn_id": self.current_turn_index + 1,
+            "turn_id": 0,
             "timestamp": time.time(),
             "strategy_name": strategy_name,
             "delivered_tokens": token_count,
@@ -85,9 +79,13 @@ class AutonomousExperimentRunner:
         metric_record.update(identity)
         metric_record["identity_confidence"] = "observed"
 
-        self.history.append(metric_record)
-        self.current_turn_index += 1
-        self._save()
+        with file_lock(self.file_path):
+            self.history = self._load()
+            self.current_turn_index = len(self.history)
+            metric_record["turn_id"] = self.current_turn_index + 1
+            self.history.append(metric_record)
+            self.current_turn_index += 1
+            self._save()
         return metric_record
 
     def get_strategy_scores(self) -> Dict[str, Dict[str, Any]]:

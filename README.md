@@ -46,7 +46,7 @@ ContextOS transforms raw interaction streams into verifiable assertions, managin
 
 ![AI Agent Memory Lifecycle](docs/assets/contextos_memory_lifecycle.jpg)
 
-1. **Event Sourcing Log**: All incoming prompts and tool outputs are recorded in an append-only, SHA-256 content-addressed JSONL event store.
+1. **Event Sourcing Log**: All incoming prompts and tool outputs are recorded in an append-only, JSONL event store (each event gets a random UUID-based `event_id`).
 2. **Semantic Assertion Extraction**: Local Ollama coprocessor extracts structured assertions (`subject`, `predicate`, `object`, `kind`, `confidence`).
 3. **Assertion Promotion**: Session facts verified as project invariants are promoted to the shared store via `promote_assertion` with origin metadata preserved.
 4. **Temporal Validity & Versioning**: Assertions track `observed_at`, `valid_from`, and `valid_until` timestamps. Deprecated facts are marked `status = 'superseded'` via `supersede_assertion`.
