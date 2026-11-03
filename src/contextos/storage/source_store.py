@@ -1,5 +1,9 @@
 import json
+import fcntl
 import hashlib
+import os
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -22,9 +26,29 @@ class SourceStore:
                 return {}
         return {}
 
+    @contextmanager
+    def _locked(self):
+        """Cross-process exclusive lock so concurrent writers serialize."""
+        with open(self.file_path.with_name(self.file_path.name + ".lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        """Atomically persist; caller must hold _locked()."""
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, prefix=self.file_path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._sources, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,18 +56,20 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
+        entry = {
             "source_id": sid,
             "sha256": sha256,
             "content": content,
             "char_count": len(content),
             "metadata": metadata or {}
         }
-        if identity:
-            self._sources[sid].update(identity.as_dict())
-            self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        entry.update(identity.as_dict())
+        entry["identity_confidence"] = "observed"
+        with self._locked():
+            # Re-read so writes from other processes/instances are merged, not clobbered.
+            self._sources = self._load()
+            self._sources[sid] = entry
+            self._save()
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
