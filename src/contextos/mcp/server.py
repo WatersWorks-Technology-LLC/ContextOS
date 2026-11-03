@@ -1,5 +1,6 @@
 import sys
 import json
+import logging
 import uuid
 from typing import Dict, Any
 from ..hooks.adapter import HookAdapter
@@ -7,6 +8,8 @@ from ..core.capsules import ContextCapsuleManager
 from ..codecs.vcl_svg import VCLSVGRenderer
 from .scope import RequestScopes, ScopeError
 from .tool_definitions import TOOLS
+
+logger = logging.getLogger(__name__)
 
 class ContextOSMCPServer:
     """
@@ -261,13 +264,23 @@ class ContextOSMCPServer:
         for line in sys.stdin:
             if not line.strip():
                 continue
+            req_id = None
             try:
-                req = json.loads(line)
+                try:
+                    req = json.loads(line)
+                except ValueError as e:
+                    err_resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"Parse error: {e}"}}
+                    sys.stdout.write(json.dumps(err_resp) + "\n")
+                    sys.stdout.flush()
+                    continue
+                if isinstance(req, dict):
+                    req_id = req.get("id")
                 resp = self.handle_request(req)
                 if resp is not None:
                     sys.stdout.write(json.dumps(resp) + "\n")
                     sys.stdout.flush()
             except Exception as e:
-                err_resp = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
+                logger.exception("Unhandled error while serving MCP request id=%r", req_id)
+                err_resp = {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
                 sys.stdout.write(json.dumps(err_resp) + "\n")
                 sys.stdout.flush()
