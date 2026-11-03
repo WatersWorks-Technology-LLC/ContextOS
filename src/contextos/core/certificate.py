@@ -50,9 +50,11 @@ class ReleaseCertificateManager:
         """
         Exports all 8 disaggregated release evidence artifacts into .contextos/.
         """
-        p50 = round(float(statistics.median(latencies_ms)), 2) if latencies_ms else 2.0
-        p95 = round(float(self._percentile(latencies_ms, 95)), 2) if latencies_ms else 3.0
-        p99 = round(float(self._percentile(latencies_ms, 99)), 2) if latencies_ms else 4.0
+        # No samples means no evidence: report null percentiles and fail the SLO
+        # rather than inventing passing latency numbers.
+        p50 = round(float(statistics.median(latencies_ms)), 2) if latencies_ms else None
+        p95 = round(float(self._percentile(latencies_ms, 95)), 2) if latencies_ms else None
+        p99 = round(float(self._percentile(latencies_ms, 99)), 2) if latencies_ms else None
 
         fold_reduction = round(control_tokens / max(1, contextos_tokens), 1)
 
@@ -102,7 +104,7 @@ class ReleaseCertificateManager:
             "p50_preprocessing_ms": p50,
             "p95_preprocessing_ms": p95,
             "p99_preprocessing_ms": p99,
-            "slo_compliance": p50 <= 5.0 and p95 <= 10.0 and p99 <= 20.0
+            "slo_compliance": bool(latencies_ms) and p50 <= 5.0 and p95 <= 10.0 and p99 <= 20.0
         }
         with open(self.data_dir / "LATENCY_REPORT.json", "w", encoding="utf-8") as f:
             json.dump(lat_report, f, indent=2)
@@ -169,8 +171,8 @@ class ReleaseCertificateManager:
             "version": effective_version,
             "canary_stage": stage,
             "canary_stage_name": canary_status.get("stage_name", "Shadow Only"),
-            "shadow_observations": 100,
-            "canary_fresh_turns": 3850,
+            "shadow_observations": canary_status.get("shadow_observations", 0),
+            "canary_fresh_turns": fresh_turns,
             "total_qualification_observations": total_fresh,
             "accumulated_fresh_turns": total_fresh,
             "critical_fidelity": 1.0,
