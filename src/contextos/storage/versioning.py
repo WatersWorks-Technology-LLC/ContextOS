@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import atomic_write_json, load_json, locked_update
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        atomic_write_json(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -75,8 +69,8 @@ class ContextVersionStore:
             "status": "active"  # active, rolled_back, failed
         }
         
-        self.versions[commit_id] = commit_record
-        self._save()
+        with locked_update(self.file_path, self.versions):
+            self.versions[commit_id] = commit_record
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
@@ -176,9 +170,10 @@ class ContextVersionStore:
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
         """
         if commit_id in self.versions:
-            self.versions[commit_id]["status"] = "failed"
-            parent = self.versions[commit_id].get("parent_commit")
-            self._save()
+            with locked_update(self.file_path, self.versions):
+                if commit_id in self.versions:
+                    self.versions[commit_id]["status"] = "failed"
+            parent = self.versions.get(commit_id, {}).get("parent_commit")
             if parent and parent in self.versions:
                 return self.versions[parent]
         
