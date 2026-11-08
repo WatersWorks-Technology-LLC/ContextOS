@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import atomic_write_json, file_lock
 
 class ContextVersionStore:
     """
@@ -26,8 +27,7 @@ class ContextVersionStore:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        atomic_write_json(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -75,8 +75,10 @@ class ContextVersionStore:
             "status": "active"  # active, rolled_back, failed
         }
         
-        self.versions[commit_id] = commit_record
-        self._save()
+        with file_lock(self.file_path):
+            self.versions = self._load()  # merge writes from other processes
+            self.versions[commit_id] = commit_record
+            self._save()
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
