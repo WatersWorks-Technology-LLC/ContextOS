@@ -1,5 +1,7 @@
+import fcntl
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
@@ -12,6 +14,7 @@ class VectorIndex:
     def __init__(self, data_dir: Path, filename: str = "vectors.json"):
         self.file_path = data_dir / filename
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path = self.file_path.with_name(self.file_path.name + ".lock")
         self.documents: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
@@ -24,8 +27,11 @@ class VectorIndex:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        # Atomic replace so readers never observe a half-written file.
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.documents, f, indent=2)
+        tmp.replace(self.file_path)
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
@@ -36,16 +42,26 @@ class VectorIndex:
         for t in tokens:
             tf[t] = tf.get(t, 0) + 1
         
-        self.documents[doc_id] = {
+        entry = {
             "doc_id": doc_id,
             "content": content,
             "tokens": tokens,
             "tf": tf,
             "metadata": metadata or {}
         }
-        self._save()
+        # Reload under an exclusive lock: other processes may have written
+        # since this instance loaded, and a blind save would drop their docs.
+        with open(self.lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                self.documents = self._load()
+                self.documents[doc_id] = entry
+                self._save()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
+        self.documents = self._load()
         query_tokens = self._tokenize(query)
         if not query_tokens or not self.documents:
             return []
