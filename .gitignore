@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 UNKNOWN.egg-info/
+*.egg-info/
 *.tmp
 *.db
 *.log
