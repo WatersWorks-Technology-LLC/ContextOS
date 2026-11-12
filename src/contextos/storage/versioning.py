@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonio import atomic_write_json, file_lock, load_json_dict
 
 class ContextVersionStore:
     """
@@ -17,17 +18,10 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        atomic_write_json(self.file_path, self.versions)
 
     def create_commit(
         self,
@@ -41,8 +35,20 @@ class ContextVersionStore:
     ) -> Dict[str, Any]:
         if identity is None:
             raise ValueError("IdentityScope is required for new versions")
+        with file_lock(self.file_path):
+            self.versions = self._load()  # pick up other processes' writes
+            return self._create_commit_locked(context_text, assertions, invariants, strategy_name,
+                                              session_id, parent_commit, identity)
+
+    def _create_commit_locked(self, context_text, assertions, invariants, strategy_name,
+                              session_id, parent_commit, identity) -> Dict[str, Any]:
         content_hash = hashlib.sha256(context_text.encode("utf-8")).hexdigest()[:10]
         commit_id = f"CMT-{content_hash}"
+        existing = self.versions.get(commit_id)
+        if existing is not None and any(existing.get(k) != v for k, v in identity.as_dict().items()):
+            # Same context text under a different identity: never overwrite/steal it.
+            digest = hashlib.sha256(identity.key().encode("utf-8")).hexdigest()[:8]
+            commit_id = f"CMT-{content_hash}-{digest}"
         
         # Enforce DAG constraints: parent_commit cannot equal self commit_id or form a cycle
         if parent_commit == commit_id:
@@ -132,6 +138,11 @@ class ContextVersionStore:
         """
         Repairs any self-referential parents or cycles in the stored version DAG.
         """
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            return self._repair_dag_locked()
+
+    def _repair_dag_locked(self) -> Dict[str, Any]:
         repaired_self = 0
         for cid, record in self.versions.items():
             if record.get("parent_commit") == cid:
@@ -175,10 +186,13 @@ class ContextVersionStore:
         """
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
         """
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            if commit_id in self.versions:
+                self.versions[commit_id]["status"] = "failed"
+                self._save()
         if commit_id in self.versions:
-            self.versions[commit_id]["status"] = "failed"
             parent = self.versions[commit_id].get("parent_commit")
-            self._save()
             if parent and parent in self.versions:
                 return self.versions[parent]
         
