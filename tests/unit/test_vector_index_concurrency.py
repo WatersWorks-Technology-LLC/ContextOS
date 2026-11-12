@@ -15,3 +15,11 @@ def test_save_is_atomic_and_leaves_no_temp_file(tmp_path):
     v = VectorIndex(tmp_path)
     v.add_document("d1", "alpha")
     assert [p.name for p in tmp_path.iterdir() if p.suffix == ".tmp"] == []
+
+
+def test_corrupt_file_is_preserved_not_overwritten(tmp_path):
+    (tmp_path / "vectors.json").write_text("{not json")
+    v = VectorIndex(tmp_path)
+    v.add_document("d1", "hello")
+    backups = [p for p in tmp_path.iterdir() if "corrupt" in p.name]
+    assert backups and backups[0].read_text() == "{not json"

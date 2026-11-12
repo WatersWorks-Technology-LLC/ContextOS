@@ -24,3 +24,12 @@ def test_save_is_atomic_and_leaves_no_temp_file(tmp_path):
     s.put_source("x", identity=ID)
     assert json.loads((tmp_path / "sources.json").read_text())
     assert [p.name for p in tmp_path.iterdir() if p.suffix == ".tmp"] == []
+
+
+def test_corrupt_file_is_preserved_not_overwritten(tmp_path):
+    (tmp_path / "sources.json").write_text("{not json")
+    s = SourceStore(tmp_path)
+    s.put_source("x", source_id="X", identity=ID)
+    backups = [p for p in tmp_path.iterdir() if "corrupt" in p.name]
+    assert backups and backups[0].read_text() == "{not json"
+    assert "X" in json.loads((tmp_path / "sources.json").read_text())

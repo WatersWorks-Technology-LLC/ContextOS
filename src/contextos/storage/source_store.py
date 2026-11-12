@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from .json_file import load_json_dict
 
 class SourceStore:
     """
@@ -17,13 +18,7 @@ class SourceStore:
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
         # Atomic replace so readers never observe a half-written file.
