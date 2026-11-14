@@ -1,5 +1,9 @@
+import fcntl
 import json
 import hashlib
+import os
+import threading
+import contextlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -11,7 +15,20 @@ class SourceStore:
     def __init__(self, data_dir: Path, filename: str = "sources.json"):
         self.file_path = data_dir / filename
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._thread_lock = threading.RLock()
+        self._lock_path = self.file_path.with_name(self.file_path.name + ".lock")
         self._sources: Dict[str, Dict[str, Any]] = self._load()
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """Serialize read-modify-write across threads and processes."""
+        with self._thread_lock:
+            with open(self._lock_path, "a") as lf:
+                fcntl.flock(lf, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lf, fcntl.LOCK_UN)
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
         if self.file_path.exists():
@@ -23,27 +40,33 @@ class SourceStore:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._sources, f, indent=2)
+        os.replace(tmp, self.file_path)  # atomic: readers never see a partial file
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
         if identity is None:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
-        sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
+        # Include identity in auto-generated ids so identical content from another
+        # workspace/project/session cannot overwrite (and re-own) this record.
+        scope = hashlib.sha256(identity.key().encode("utf-8")).hexdigest()[:8]
+        sid = source_id or f"SRC-{sha256}-{scope}"
+        record = {
             "source_id": sid,
             "sha256": sha256,
             "content": content,
             "char_count": len(content),
-            "metadata": metadata or {}
+            "metadata": metadata or {},
+            **identity.as_dict(),
+            "identity_confidence": "observed",
         }
-        if identity:
-            self._sources[sid].update(identity.as_dict())
-            self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        with self._locked():
+            self._sources = self._load()  # merge with writes from other processes
+            self._sources[sid] = record
+            self._save()
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
