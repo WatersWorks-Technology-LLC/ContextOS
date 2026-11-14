@@ -1,5 +1,7 @@
 import json
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -23,14 +25,25 @@ class SourceStore:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        # Atomic replace so a crash never leaves a truncated file (which _load
+        # would read as empty and then overwrite, losing every source).
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._sources, f, indent=2)
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
         if identity is None:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+        # Refresh from disk so writes made by other instances/processes are kept.
+        self._sources = self._load()
         sid = source_id or f"SRC-{sha256}"
         self._sources[sid] = {
             "source_id": sid,

@@ -1,6 +1,8 @@
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
@@ -24,13 +26,22 @@ class VectorIndex:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.documents, f, indent=2)
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.documents, f, indent=2)
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def _tokenize(self, text: str) -> List[str]:
         return [w.lower() for w in re.findall(r'\w+', text)]
 
     def add_document(self, doc_id: str, content: str, metadata: Dict[str, Any] = None):
+        # Refresh from disk so writes made by other instances/processes are kept.
+        self.documents = self._load()
         tokens = self._tokenize(content)
         tf = {}
         for t in tokens:
