@@ -32,7 +32,10 @@ class SourceStore:
         if identity is None:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
-        sid = source_id or f"SRC-{sha256}"
+        # Include identity in auto-generated ids so identical content from another
+        # workspace/project/session cannot overwrite (and re-own) this record.
+        scope = hashlib.sha256(identity.key().encode("utf-8")).hexdigest()[:8]
+        sid = source_id or f"SRC-{sha256}-{scope}"
         # Reload under an exclusive lock: other processes (e.g. the shared store
         # used by several runtimes) may have written since this instance loaded.
         with open(self.lock_path, "w") as lock_file:
