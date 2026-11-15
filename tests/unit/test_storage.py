@@ -40,3 +40,21 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_json_stores_do_not_lose_concurrent_writes(tmp_path):
+    """Two store instances (e.g. two processes) on one file must not clobber each other."""
+    from contextos.identity import IdentityScope
+    from contextos.storage.source_store import SourceStore
+    from contextos.storage.vector_index import VectorIndex
+    ident = IdentityScope("codex", "ws", "proj", "s1")
+    a, b = SourceStore(tmp_path), SourceStore(tmp_path)
+    sa = a.put_source("alpha", identity=ident)
+    sb = b.put_source("beta", identity=ident)
+    fresh = SourceStore(tmp_path)
+    assert fresh.get_source(sa) and fresh.get_source(sb)
+    va, vb = VectorIndex(tmp_path), VectorIndex(tmp_path)
+    va.add_document("d1", "alpha text")
+    vb.add_document("d2", "beta text")
+    assert set(VectorIndex(tmp_path).documents) == {"d1", "d2"}
+    assert not list(tmp_path.glob("*.tmp"))

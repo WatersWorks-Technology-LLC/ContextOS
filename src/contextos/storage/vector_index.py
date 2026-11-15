@@ -3,6 +3,7 @@ import math
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+from ._jsonfile import merge_write
 
 class VectorIndex:
     """
@@ -43,9 +44,10 @@ class VectorIndex:
             "tf": tf,
             "metadata": metadata or {}
         }
-        self._save()
+        self.documents = merge_write(self.file_path, doc_id, self.documents[doc_id])
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
+        self.documents = self._load()
         query_tokens = self._tokenize(query)
         if not query_tokens or not self.documents:
             return []

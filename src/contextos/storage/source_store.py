@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from ._jsonfile import merge_write
 
 class SourceStore:
     """
@@ -32,26 +33,28 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
+        record = {
             "source_id": sid,
             "sha256": sha256,
             "content": content,
             "char_count": len(content),
             "metadata": metadata or {}
         }
-        if identity:
-            self._sources[sid].update(identity.as_dict())
-            self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        record.update(identity.as_dict())
+        record["identity_confidence"] = "observed"
+        # Merge into the on-disk state under a lock so concurrent processes
+        # sharing this file do not overwrite each other's sources.
+        self._sources = merge_write(self.file_path, sid, record)
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        self._sources = self._load()
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
                     identity: Optional[IdentityScope] = None,
                     allow_legacy: bool = True) -> Dict[str, Any]:
+        self._sources = self._load()
         result = {}
         total_chars = 0
         for sid in source_ids:
