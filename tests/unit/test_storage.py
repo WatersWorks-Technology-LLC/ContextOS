@@ -40,3 +40,19 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_json_stores_merge_concurrent_writers(tmp_path):
+    """Two instances on the same dir must not lose each other's writes."""
+    from contextos.identity import IdentityScope
+    from contextos.storage.source_store import SourceStore
+    from contextos.storage.vector_index import VectorIndex
+    ident = IdentityScope("codex", "w", "p", "s", "main")
+    a, b = SourceStore(tmp_path), SourceStore(tmp_path)
+    a.put_source("one", source_id="A", identity=ident)
+    b.put_source("two", source_id="B", identity=ident)
+    assert set(SourceStore(tmp_path)._sources) == {"A", "B"}
+    v1, v2 = VectorIndex(tmp_path), VectorIndex(tmp_path)
+    v1.add_document("x", "hello")
+    v2.add_document("y", "world")
+    assert set(VectorIndex(tmp_path).documents) == {"x", "y"}
