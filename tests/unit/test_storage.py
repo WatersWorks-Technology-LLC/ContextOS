@@ -40,3 +40,15 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_source_store_multi_instance_writes_not_lost(tmp_path):
+    """Two SourceStore instances (e.g. two processes) on one file must not clobber each other."""
+    from contextos.identity import IdentityScope
+    ident = IdentityScope("r", "w", "p", "s", "main")
+    a, b = SourceStore(tmp_path), SourceStore(tmp_path)
+    a.put_source("alpha", source_id="A", identity=ident)
+    b.put_source("beta", source_id="B", identity=ident)
+    fresh = SourceStore(tmp_path)
+    assert fresh.get_source("A") and fresh.get_source("B")
+    assert a.get_source("B") is not None  # readers see other writers' data
