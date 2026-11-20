@@ -4,6 +4,19 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
+from ._jsonfile import atomic_write_json, file_lock, load_json
+
+def _locked_mutation(method):
+    """Run a read-modify-write method under the file lock on fresh on-disk state."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with file_lock(self.file_path):
+            self.versions = self._load()
+            return method(self, *args, **kwargs)
+    return wrapper
+
 
 class ContextVersionStore:
     """
@@ -17,18 +30,12 @@ class ContextVersionStore:
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        atomic_write_json(self.file_path, self.versions)
 
+    @_locked_mutation
     def create_commit(
         self,
         context_text: str,
@@ -128,6 +135,7 @@ class ContextVersionStore:
             "missing_parents": missing_parents
         }
 
+    @_locked_mutation
     def repair_dag(self) -> Dict[str, Any]:
         """
         Repairs any self-referential parents or cycles in the stored version DAG.
@@ -171,6 +179,7 @@ class ContextVersionStore:
             "valid_after_repair": self.validate_dag_integrity()["is_valid"]
         }
 
+    @_locked_mutation
     def rollback(self, commit_id: str) -> Optional[Dict[str, Any]]:
         """
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
