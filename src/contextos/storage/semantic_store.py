@@ -263,10 +263,13 @@ class SemanticStore:
 
     def search_assertions(self, keyword: str, limit: int = 20,
                           identity: Optional[IdentityScope] = None) -> List[Dict[str, Any]]:
-        pattern = f"%{keyword}%"
+        # Escape LIKE metacharacters so "%" / "_" in the keyword match literally.
+        escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
         clause, params = self._identity_filter(identity)
         query = """SELECT * FROM assertions
-                   WHERE (assertion_id = ? OR subject LIKE ? OR predicate LIKE ? OR object LIKE ? OR decision_rationale LIKE ?)
+                   WHERE (assertion_id = ? OR subject LIKE ? ESCAPE '\\' OR predicate LIKE ? ESCAPE '\\'
+                          OR object LIKE ? ESCAPE '\\' OR decision_rationale LIKE ? ESCAPE '\\')
                    AND """ + clause + " ORDER BY created_at DESC LIMIT ?"
         with self._get_conn() as conn:
             rows = conn.execute(query, [keyword, pattern, pattern, pattern, pattern, *params, limit]).fetchall()

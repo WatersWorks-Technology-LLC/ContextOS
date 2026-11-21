@@ -5,6 +5,26 @@ import re
 import fcntl
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
+from ..storage.json_file import load_json_dict
+
+
+def _transactional(fn):
+    """Hold an exclusive file lock across the whole load-modify-save cycle so
+    concurrent processes cannot overwrite each other's updates."""
+    def wrapper(self, *args, **kwargs):
+        if self._tx_depth:
+            return fn(self, *args, **kwargs)
+        with open(self.lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            self._tx_depth += 1
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                self._tx_depth -= 1
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
 
 class GoalEngine:
     """
@@ -18,37 +38,42 @@ class GoalEngine:
     def __init__(self, data_dir: Path, filename: str = "goals.json"):
         self.file_path = data_dir / filename
         self.lock_path = data_dir / "goals.json.lock"
+        self._tx_depth = 0
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load_with_lock()
 
     def _load_with_lock(self) -> Dict[str, Any]:
+        if self._tx_depth:
+            return self._read_data()
         with open(self.lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_SH)
             try:
-                if self.file_path.exists():
-                    try:
-                        with open(self.file_path, "r", encoding="utf-8") as f:
-                            return json.load(f)
-                    except Exception:
-                        pass
-                return {
-                    "sessions": {},
-                    "subagents": {},
-                    "goals": {}
-                }
+                return self._read_data()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
+    def _read_data(self) -> Dict[str, Any]:
+        data = load_json_dict(self.file_path)
+        for key in ("sessions", "subagents", "goals"):
+            data.setdefault(key, {})
+        return data
+
     def _save_with_lock(self):
+        if self._tx_depth:
+            self._write_data()
+            return
         with open(self.lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
-                temp_file = self.file_path.with_suffix(".tmp")
-                with open(temp_file, "w", encoding="utf-8") as f:
-                    json.dump(self.data, f, indent=2)
-                temp_file.replace(self.file_path)
+                self._write_data()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    def _write_data(self):
+        temp_file = self.file_path.with_name(f"{self.file_path.name}.{uuid.uuid4().hex}.tmp")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        temp_file.replace(self.file_path)
 
     def _get_identity_key(
         self,
@@ -60,6 +85,7 @@ class GoalEngine:
     ) -> str:
         return f"{runtime_id}:{workspace_id}:{project_id}:{session_id}:{agent_id}"
 
+    @_transactional
     def set_active_goal(
         self,
         description: str,
@@ -111,6 +137,7 @@ class GoalEngine:
         self._save_with_lock()
         return goal
 
+    @_transactional
     def register_subagent(
         self,
         subagent_id: str = "subagent-1",
@@ -203,6 +230,7 @@ class GoalEngine:
 
         return evidence
 
+    @_transactional
     def record_checkpoint(self, tool_name: str, tool_input: Any, tool_output: str, session_id: str = "default", identity=None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         self.data = self._load_with_lock()
         goal = self.get_active_goal(**identity.as_dict()) if identity else self.get_active_goal(session_id=session_id)
@@ -254,6 +282,7 @@ class GoalEngine:
         )
         return goal, feedback_str
 
+    @_transactional
     def verify_criterion(self, criterion_id: str, evidence: str, session_id: str = "default") -> bool:
         self.data = self._load_with_lock()
         goal = self.get_active_goal(session_id=session_id)
@@ -270,6 +299,7 @@ class GoalEngine:
         return False
 
 
+    @_transactional
     def evaluate_stop_condition(self, final_response_text: str = "", session_id: str = "default", identity=None) -> Dict[str, Any]:
         """
         Evaluates whether Codex is permitted to STOP or must BLOCK/CONTINUE working.
