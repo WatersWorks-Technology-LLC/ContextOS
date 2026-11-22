@@ -1,5 +1,7 @@
+import fcntl
 import json
 import hashlib
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -10,6 +12,7 @@ class SourceStore:
     """
     def __init__(self, data_dir: Path, filename: str = "sources.json"):
         self.file_path = data_dir / filename
+        self.lock_path = data_dir / (filename + ".lock")
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
@@ -22,9 +25,22 @@ class SourceStore:
                 return {}
         return {}
 
-    def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+    def _save(self, new_entries: Optional[Dict[str, Dict[str, Any]]] = None):
+        """Merge new entries into the on-disk state under an exclusive lock, then
+        replace the file atomically so concurrent processes never lose each
+        other's sources and readers never see a truncated file."""
+        with open(self.lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                merged = self._load()
+                merged.update(new_entries or {})
+                tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, indent=2)
+                tmp.replace(self.file_path)
+                self._sources = merged
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,18 +48,16 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
-        self._sources[sid] = {
+        entry = {
             "source_id": sid,
             "sha256": sha256,
             "content": content,
             "char_count": len(content),
             "metadata": metadata or {}
         }
-        if identity:
-            self._sources[sid].update(identity.as_dict())
-            self._sources[sid]["identity_confidence"] = "observed"
-        self._sources[sid]["identity_confidence"] = "observed"
-        self._save()
+        entry.update(identity.as_dict())
+        entry["identity_confidence"] = "observed"
+        self._save({sid: entry})
         return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
