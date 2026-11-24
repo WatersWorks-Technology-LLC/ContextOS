@@ -1,5 +1,8 @@
+import fcntl
 import json
 import hashlib
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -23,8 +26,22 @@ class SourceStore:
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        # Atomic replace so a crash or concurrent reader never sees a truncated file.
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._sources, f, indent=2)
+        os.replace(tmp, self.file_path)
+
+    @contextmanager
+    def _write_lock(self):
+        """Cross-process lock; callers reload from disk inside it to avoid lost updates."""
+        lock_path = self.file_path.with_name(self.file_path.name + ".lock")
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,6 +49,12 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
+        with self._write_lock():
+            self._sources = self._load()
+            self._put_locked(sid, sha256, content, metadata, identity)
+        return sid
+
+    def _put_locked(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,14 +67,15 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        self._sources = self._load()
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
                     identity: Optional[IdentityScope] = None,
                     allow_legacy: bool = True) -> Dict[str, Any]:
+        self._sources = self._load()
         result = {}
         total_chars = 0
         for sid in source_ids:
