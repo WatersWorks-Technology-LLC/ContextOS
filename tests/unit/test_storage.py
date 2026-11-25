@@ -40,3 +40,32 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_bugsweep_json_stores_do_not_lose_concurrent_writes(tmp_dir):
+    """Two store instances (e.g. two processes) on one dir must not clobber each other."""
+    from contextos.storage.versioning import ContextVersionStore
+    ident = IdentityScope("codex", "workspace", "project", "s1", "main")
+    a, b = SourceStore(tmp_dir), SourceStore(tmp_dir)
+    sa = a.put_source("alpha", identity=ident)
+    sb = b.put_source("beta", identity=ident)
+    fresh = SourceStore(tmp_dir)
+    assert fresh.get_source(sa) and fresh.get_source(sb)
+
+    va, vb = VectorIndex(tmp_dir), VectorIndex(tmp_dir)
+    va.add_document("d1", "alpha text")
+    vb.add_document("d2", "beta text")
+    assert set(VectorIndex(tmp_dir).documents) == {"d1", "d2"}
+
+    ca, cb = ContextVersionStore(tmp_dir), ContextVersionStore(tmp_dir)
+    c1 = ca.create_commit("ctx one", [], [], "s", identity=ident)["commit_id"]
+    c2 = cb.create_commit("ctx two", [], [], "s", identity=ident)["commit_id"]
+    assert {c1, c2} <= set(ContextVersionStore(tmp_dir).versions)
+
+
+def test_bugsweep_corrupt_json_store_is_preserved_not_overwritten(tmp_dir):
+    ident = IdentityScope("codex", "workspace", "project", "s1", "main")
+    (tmp_dir / "sources.json").write_text('{"SRC-x": {"content": "precious"', encoding="utf-8")
+    ss = SourceStore(tmp_dir)
+    ss.put_source("new", identity=ident)
+    assert list(tmp_dir.glob("sources.json.corrupt-*")), "corrupt file must be kept for recovery"
