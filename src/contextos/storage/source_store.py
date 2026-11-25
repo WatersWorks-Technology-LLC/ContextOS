@@ -1,8 +1,11 @@
+import fcntl
 import json
 import hashlib
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
+from .json_file import load_json_dict
 
 class SourceStore:
     """
@@ -11,27 +14,40 @@ class SourceStore:
     def __init__(self, data_dir: Path, filename: str = "sources.json"):
         self.file_path = data_dir / filename
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path = self.file_path.with_name(self.file_path.name + ".lock")
         self._sources: Dict[str, Dict[str, Any]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return load_json_dict(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        # Atomic replace so readers never observe a half-written file.
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._sources, f, indent=2)
+        tmp.replace(self.file_path)
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
         if identity is None:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
-        sid = source_id or f"SRC-{sha256}"
+        # Include identity in auto-generated ids so identical content from another
+        # workspace/project/session cannot overwrite (and re-own) this record.
+        scope = hashlib.sha256(identity.key().encode("utf-8")).hexdigest()[:8]
+        sid = source_id or f"SRC-{sha256}-{scope}"
+        # Reload under an exclusive lock: other processes (e.g. the shared store
+        # used by several runtimes) may have written since this instance loaded.
+        with open(self.lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                self._sources = self._load()
+                self._put_locked(sid, sha256, content, metadata, identity)
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+        return sid
+
+    def _put_locked(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,14 +60,15 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        self._sources = self._load()
         return self._sources.get(source_id)
 
     def get_sources(self, source_ids: list, max_chars: int = 12000,
                     identity: Optional[IdentityScope] = None,
                     allow_legacy: bool = True) -> Dict[str, Any]:
+        self._sources = self._load()
         result = {}
         total_chars = 0
         for sid in source_ids:

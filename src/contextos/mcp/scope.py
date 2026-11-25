@@ -1,4 +1,5 @@
 """Resolve MCP requests without a mutable process-wide active workspace."""
+from collections import OrderedDict
 from pathlib import Path
 import re
 from threading import RLock
@@ -13,10 +14,14 @@ class ScopeError(ValueError):
 
 
 class RequestScopes:
+    # Upper bound on remembered session->adapter bindings; least recently used
+    # sessions are evicted so a long-lived server does not grow without limit.
+    MAX_SESSIONS = 4096
+
     def __init__(self, default_adapter):
         self.default_adapter = default_adapter
         self._adapters = {self._key(default_adapter.config): default_adapter}
-        self._sessions = {}
+        self._sessions = OrderedDict()
         self._lock = RLock()
         self.has_requests = False
 
@@ -67,6 +72,8 @@ class RequestScopes:
 
         with self._lock:
             bound = self._sessions.get(session) if session is not None else None
+            if bound is not None:
+                self._sessions.move_to_end(session)
             base = bound or self.default_adapter
             resolved_cwd = cwd or str(base.config.workspace_dir.resolve())
             if bound and (resolved_cwd != str(bound.config.workspace_dir.resolve())
@@ -116,5 +123,8 @@ class RequestScopes:
                 self._adapters[key] = adapter
             if session is not None and name in ("prepare_turn", "session_start"):
                 self._sessions[session] = adapter
+                self._sessions.move_to_end(session)
+                while len(self._sessions) > self.MAX_SESSIONS:
+                    self._sessions.popitem(last=False)
             self.has_requests = True
             return adapter, identity
