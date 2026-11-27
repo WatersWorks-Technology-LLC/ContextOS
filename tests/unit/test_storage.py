@@ -40,3 +40,32 @@ def test_unit_semantic_store_temporal(tmp_dir):
     sem.record_closed_branch("D14", "SessionTokens", "Security vulnerability", "reopen_if_patch_available")
     cb = sem.query_conflicts_and_closed_branches()
     assert len(cb["closed_branches"]) == 1
+
+
+def test_promote_assertion_works(tmp_path):
+    from contextos.storage.semantic_store import SemanticStore
+    st = SemanticStore(tmp_path)
+    st.add_assertion("A1", "s", "p", "o", scope="session")
+    pid = st.promote_assertion("A1", "project")
+    assert pid and pid.startswith("AST-PROM-")
+
+
+def test_source_store_multi_instance_no_lost_updates(tmp_path):
+    from contextos.identity import IdentityScope
+    from contextos.storage.source_store import SourceStore
+    ident = IdentityScope("codex", "w", "p", "s")
+    a, b = SourceStore(tmp_path), SourceStore(tmp_path)  # two "processes"
+    a.put_source("one", source_id="A", identity=ident)
+    b.put_source("two", source_id="B", identity=ident)
+    fresh = SourceStore(tmp_path)
+    assert fresh.get_source("A") and fresh.get_source("B")
+    assert a.get_source("B")  # sees other writer
+
+
+def test_source_store_corrupt_file_preserved(tmp_path):
+    from contextos.identity import IdentityScope
+    from contextos.storage.source_store import SourceStore
+    (tmp_path / "sources.json").write_text("{not json")
+    s = SourceStore(tmp_path)
+    s.put_source("x", source_id="X", identity=IdentityScope("c", "w", "p", "s"))
+    assert list(tmp_path.glob("sources.json.corrupt-*"))
