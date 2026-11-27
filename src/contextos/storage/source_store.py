@@ -1,5 +1,8 @@
+import fcntl
 import json
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..identity import IdentityScope
@@ -19,12 +22,28 @@ class SourceStore:
                 with open(self.file_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
+                # Never silently discard unreadable evidence: keep a copy so the
+                # next save cannot overwrite it with an empty store.
+                try:
+                    os.replace(self.file_path, self.file_path.with_name(self.file_path.name + ".corrupt"))
+                except OSError:
+                    pass
                 return {}
         return {}
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self._sources, f, indent=2)
+        # Atomic replace so readers/crashes never see a truncated file.
+        fd, tmp = tempfile.mkstemp(dir=self.file_path.parent, prefix=self.file_path.name + ".")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._sources, f, indent=2)
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def put_source(self, content: str, source_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                    identity: Optional[IdentityScope] = None) -> str:
@@ -32,6 +51,19 @@ class SourceStore:
             raise ValueError("IdentityScope is required for new sources")
         sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
         sid = source_id or f"SRC-{sha256}"
+        lock_path = self.file_path.with_name(self.file_path.name + ".lock")
+        with open(lock_path, "a") as lock:
+            # Serialize read-modify-write across processes; re-read so writes
+            # from other processes/instances are not lost.
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                self._sources = self._load()
+                self._put_locked(sid, sha256, content, metadata, identity)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        return sid
+
+    def _put_locked(self, sid, sha256, content, metadata, identity):
         self._sources[sid] = {
             "source_id": sid,
             "sha256": sha256,
@@ -44,7 +76,6 @@ class SourceStore:
             self._sources[sid]["identity_confidence"] = "observed"
         self._sources[sid]["identity_confidence"] = "observed"
         self._save()
-        return sid
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
         return self._sources.get(source_id)
