@@ -2,6 +2,7 @@ import json
 import hashlib
 import time
 from pathlib import Path
+from ._jsonfile import load_json, update_json
 from typing import Dict, Any, Optional, List
 from ..identity import IdentityScope
 
@@ -16,18 +17,14 @@ class ContextVersionStore:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self.versions: Dict[str, Dict[str, Any]] = self._load()
 
-    def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self.file_path.exists():
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+    def _load(self):
+        return load_json(self.file_path)
 
     def _save(self):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.versions, f, indent=2)
+        """Atomically replace the on-disk state with the in-memory state."""
+        with update_json(self.file_path) as data:
+            data.clear()
+            data.update(self.versions)
 
     def create_commit(
         self,
@@ -75,8 +72,9 @@ class ContextVersionStore:
             "status": "active"  # active, rolled_back, failed
         }
         
-        self.versions[commit_id] = commit_record
-        self._save()
+        with update_json(self.file_path) as data:
+            data[commit_id] = commit_record
+            self.versions = data
         return commit_record
 
     def validate_dag_integrity(self) -> Dict[str, Any]:
@@ -132,6 +130,11 @@ class ContextVersionStore:
         """
         Repairs any self-referential parents or cycles in the stored version DAG.
         """
+        with update_json(self.file_path) as data:
+            self.versions = data
+            return self._repair_dag_locked()
+
+    def _repair_dag_locked(self) -> Dict[str, Any]:
         repaired_self = 0
         for cid, record in self.versions.items():
             if record.get("parent_commit") == cid:
@@ -162,9 +165,6 @@ class ContextVersionStore:
             if cid not in visited:
                 dfs_repair(cid)
 
-        if repaired_self > 0 or repaired_cycles > 0:
-            self._save()
-
         return {
             "repaired_self_parents": repaired_self,
             "repaired_cycles": repaired_cycles,
@@ -175,10 +175,12 @@ class ContextVersionStore:
         """
         Marks a commit as failed/rolled_back and retrieves parent or prior stable commit.
         """
+        with update_json(self.file_path) as data:
+            self.versions = data
+            if commit_id in data:
+                data[commit_id]["status"] = "failed"
         if commit_id in self.versions:
-            self.versions[commit_id]["status"] = "failed"
             parent = self.versions[commit_id].get("parent_commit")
-            self._save()
             if parent and parent in self.versions:
                 return self.versions[parent]
         
